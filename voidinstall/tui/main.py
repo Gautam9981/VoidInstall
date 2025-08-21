@@ -34,10 +34,10 @@ class WelcomeForm(npyscreen.ActionForm):
         self.nextrely += 1
         
         # Show test mode warning if applicable
-        #if self.parentApp.test_mode:
-            #self.add(npyscreen.FixedText, value="*** TEST MODE ENABLED ***", editable=False)
-            #self.add(npyscreen.FixedText, value="Running in simulation mode - no actual changes will be made", editable=False)
-            #self.nextrely += 1
+        if self.parentApp.test_mode:
+            self.add(npyscreen.FixedText, value="*** TEST MODE ENABLED ***", editable=False)
+            self.add(npyscreen.FixedText, value="Running in simulation mode - no actual changes will be made", editable=False)
+            self.nextrely += 1
         
         welcome_text = [
             "This installer will guide you through installing Void Linux.",
@@ -111,10 +111,10 @@ class DiskConfigForm(npyscreen.ActionForm):
         self.nextrely += 1
         # Password fields with separate labels for better positioning
         self.add(npyscreen.FixedText, value="Encryption password:", editable=False)
-        self.encrypt_pass = self.add(npyscreen.Textfield, value="", password=True, scroll_exit=True)
+        self.encrypt_pass = self.add(npyscreen.TitlePassword, name="", value="", scroll_exit=True)
         
         self.add(npyscreen.FixedText, value="Confirm password:", editable=False)
-        self.encrypt_pass_confirm = self.add(npyscreen.Textfield, value="", password=True, scroll_exit=True)
+        self.encrypt_pass_confirm = self.add(npyscreen.TitlePassword, name="", value="", scroll_exit=True)
         
         self.nextrely += 1
         self.add(npyscreen.FixedText, value="• cfdisk: Interactive partition editor", editable=False)
@@ -230,10 +230,10 @@ class UserConfigForm(npyscreen.ActionForm):
         # Password section
         self.add(npyscreen.FixedText, value="Password Configuration:", editable=False)
         self.add(npyscreen.FixedText, value="Password:", editable=False)
-        self.password = self.add(npyscreen.Textfield, max_width=40, password=True, scroll_exit=True)
+        self.password = self.add(npyscreen.TitlePassword, name="", max_width=40, scroll_exit=True)
         
         self.add(npyscreen.FixedText, value="Confirm Password:", editable=False)
-        self.password_confirm = self.add(npyscreen.Textfield, max_width=40, password=True, scroll_exit=True)
+        self.password_confirm = self.add(npyscreen.TitlePassword, name="", max_width=40, scroll_exit=True)
         
         self.nextrely += 2
         
@@ -902,5 +902,4 @@ def launch_tui():
 
 if __name__ == "__main__":
     launch_tui()
-
 
