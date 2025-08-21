@@ -34,10 +34,10 @@ class WelcomeForm(npyscreen.ActionForm):
         self.nextrely += 1
         
         # Show test mode warning if applicable
-        if self.parentApp.test_mode:
-            self.add(npyscreen.FixedText, value="*** TEST MODE ENABLED ***", editable=False)
-            self.add(npyscreen.FixedText, value="Running in simulation mode - no actual changes will be made", editable=False)
-            self.nextrely += 1
+        #if self.parentApp.test_mode:
+            #self.add(npyscreen.FixedText, value="*** TEST MODE ENABLED ***", editable=False)
+            #self.add(npyscreen.FixedText, value="Running in simulation mode - no actual changes will be made", editable=False)
+            #self.nextrely += 1
         
         welcome_text = [
             "This installer will guide you through installing Void Linux.",
@@ -902,4 +902,5 @@ def launch_tui():
 
 if __name__ == "__main__":
     launch_tui()
+
 
