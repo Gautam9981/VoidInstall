@@ -1,4 +1,0 @@
-# English locale for voidinstall (bash)
-LANG="en_US.UTF-8"
-WELCOME="Welcome to voidinstall!"
-INSTALL_COMPLETE="Installation complete!"
