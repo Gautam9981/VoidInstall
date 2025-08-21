@@ -127,7 +127,7 @@ class MainForm(npyscreen.FormBaseNew):
             self.status.value = f"[INSTALL] Boot mode: {'UEFI' if uefi else 'BIOS/Legacy'}"
             self.display()
 
-            self.status.value = "            # Partition and format disk
+            self.status.value = "            # Partition and format disk              "
             self.status.value = "[INSTALL] Partitioning disk..."
             self.status.display()
             
@@ -233,3 +233,4 @@ def launch_tui():
 
 if __name__ == "__main__":
     launch_tui()
+
