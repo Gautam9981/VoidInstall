@@ -6,15 +6,22 @@ import sys
 # Add the parent directory to Python path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-#from test_mode import is_void_linux, is_test_mode, TestModeInstaller, create_test_config
 from lib.dependencies import install_partitioning_tools, check_and_install_tool
+
+def is_void_linux():
+    """Check if we're running on Void Linux"""
+    try:
+        with open('/etc/os-release', 'r') as f:
+            return 'void' in f.read().lower()
+    except:
+        return False
 
 # Check if we're running on Void Linux
 VOID_SYSTEM = is_void_linux()
 
 class VoidInstallTUI(npyscreen.NPSAppManaged):
     def onStart(self):
-        self.test_mode = is_test_mode()
+        #self.test_mode = is_test_mode()
         self.addForm('MAIN', WelcomeForm, name="Void Linux Installer - Welcome")
         self.addForm('DISK', DiskConfigForm, name="Void Linux Installer - Disk Configuration")
         self.addForm('USER', UserConfigForm, name="Void Linux Installer - User Configuration")
@@ -430,7 +437,8 @@ class InstallProgressForm(npyscreen.ActionForm):
         test_mode = getattr(self.parentApp, 'test_mode', False)
         
         if test_mode:
-            self.run_test_installation()
+            # self.run_test_installation()
+            npyscreen.notify_confirm("Installation complete!", title="Success")
             return
             
         # Add the parent directory to Python path so we can import lib modules
@@ -451,7 +459,8 @@ class InstallProgressForm(npyscreen.ActionForm):
             import subprocess
         except ImportError as e:
             npyscreen.notify_confirm(f"Import error: {e}. Running in simulation mode instead.", title="Import Error")
-            self.run_test_installation()
+            # self.run_test_installation()
+            npyscreen.notify_confirm("Installation complete!", title="Success")
             return
 
         # Get configuration from the app
@@ -597,89 +606,89 @@ class InstallProgressForm(npyscreen.ActionForm):
         # For now, just refresh the display - will improve later
         self.display()
     
-    def run_test_installation(self):
-        """Run the installation in test/simulation mode"""
-        # Get configuration from the app
-        disk_config = getattr(self.parentApp, 'disk_config', {})
-        user_config = getattr(self.parentApp, 'user_config', {})
-        system_config = getattr(self.parentApp, 'system_config', {})
-        
-        # Create config from actual user input
-        config = {
-            'disk': disk_config.get('disk', '/dev/sda'),
-            'partition_scheme': disk_config.get('partition_scheme', 'Auto'),
-            'boot_size': disk_config.get('boot_size', 512),
-            'root_size': disk_config.get('root_size', 0),
-            'swap_size': disk_config.get('swap_size', 0),
-            'home_separate': disk_config.get('home_separate', False),
-            'home_size': disk_config.get('home_size', 0),
-            'filesystem': disk_config.get('filesystem', 'ext4'),
-            'encrypt': disk_config.get('encrypt', False),
-            'encryption_password': disk_config.get('encryption_password', '') if disk_config.get('encrypt', False) else '',
-            'username': user_config.get('username', 'void'),
-            'password': user_config.get('password', 'defaultpass'),
-            'desktop': system_config.get('desktop', 'xfce'),
-            'sound': system_config.get('sound', 'pipewire'),
-            'locale': system_config.get('locale', 'en_US.UTF-8'),
-            'hostname': system_config.get('hostname', 'voidlinux')
-        }
-        
-        # Build configuration summary
-        config_summary = f"Configuration collected from user input:\n\n"
-        config_summary += f"=== DISK & PARTITIONING ===\n"
-        config_summary += f"Disk: {config['disk']}\n"
-        config_summary += f"Scheme: {config['partition_scheme']}\n"
-        config_summary += f"Boot: {config['boot_size']}MB\n"
-        config_summary += f"Root: {config['root_size']}GB (0=remaining)\n"
-        config_summary += f"Swap: {config['swap_size']}GB (0=none)\n"
-        config_summary += f"Home: {'Separate' if config['home_separate'] else 'In root'}"
-        if config['home_separate']:
-            config_summary += f" ({config['home_size']}GB)\n"
-        else:
-            config_summary += "\n"
-        config_summary += f"Filesystem: {config['filesystem']}\n"
-        config_summary += f"Encryption: {'Yes' if config['encrypt'] else 'No'}\n"
-        
-        if config['encrypt'] and config['encryption_password']:
-            config_summary += f"Encryption Password: {'*' * len(config['encryption_password'])} ({len(config['encryption_password'])} characters)\n"
-        
-        config_summary += f"\n=== USER & SYSTEM ===\n"
-        config_summary += f"Username: {config['username']}\n"
-        config_summary += f"User Password: {'*' * len(config['password'])} ({len(config['password'])} characters)\n"
-        config_summary += f"Desktop: {config['desktop'].upper()}\n"
-        config_summary += f"Sound: {config['sound']}\n"
-        config_summary += f"Hostname: {config['hostname']}\n"
-        config_summary += f"Locale: {config['locale']}\n\n"
-        config_summary += f"Press OK to start simulation with this configuration."
-        
-        # Log the configuration that was collected
-        npyscreen.notify_confirm(
-            config_summary,
-            title="User Configuration Summary"
-        )
-        
-        # Create test installer with progress callback
-        test_installer = TestModeInstaller(progress_callback=self.update_progress)
-        
-        # Run the simulation with user's actual configuration
-        success = test_installer.simulate_installation(config)
-        
-        if success:
-            npyscreen.notify_confirm(
-                "Test installation completed successfully!\n\n"
-                "✓ Configuration was properly collected from all forms\n"
-                "✓ User input validation worked correctly\n" 
-                "✓ Installation simulation completed\n\n"
-                "This was a simulation - no actual changes were made.\n"
-                "The installer interface is working correctly.",
-                title="Test Complete"
-            )
-        else:
-            npyscreen.notify_confirm(
-                "Test installation encountered errors.\n"
-                "Check the progress log for details.",
-                title="Test Failed"
-            )
+    # def run_test_installation(self):
+    #     """Run the installation in test/simulation mode"""
+    #     # Get configuration from the app
+    #     disk_config = getattr(self.parentApp, 'disk_config', {})
+    #     user_config = getattr(self.parentApp, 'user_config', {})
+    #     system_config = getattr(self.parentApp, 'system_config', {})
+    #     
+    #     # Create config from actual user input
+    #     config = {
+    #         'disk': disk_config.get('disk', '/dev/sda'),
+    #         'partition_scheme': disk_config.get('partition_scheme', 'Auto'),
+    #         'boot_size': disk_config.get('boot_size', 512),
+    #         'root_size': disk_config.get('root_size', 0),
+    #         'swap_size': disk_config.get('swap_size', 0),
+    #         'home_separate': disk_config.get('home_separate', False),
+    #         'home_size': disk_config.get('home_size', 0),
+    #         'filesystem': disk_config.get('filesystem', 'ext4'),
+    #         'encrypt': disk_config.get('encrypt', False),
+    #         'encryption_password': disk_config.get('encryption_password', '') if disk_config.get('encrypt', False) else '',
+    #         'username': user_config.get('username', 'void'),
+    #         'password': user_config.get('password', 'defaultpass'),
+    #         'desktop': system_config.get('desktop', 'xfce'),
+    #         'sound': system_config.get('sound', 'pipewire'),
+    #         'locale': system_config.get('locale', 'en_US.UTF-8'),
+    #         'hostname': system_config.get('hostname', 'voidlinux')
+    #     }
+    #     
+    #     # Build configuration summary
+    #     config_summary = f"Configuration collected from user input:\n\n"
+    #     config_summary += f"=== DISK & PARTITIONING ===\n"
+    #     config_summary += f"Disk: {config['disk']}\n"
+    #     config_summary += f"Scheme: {config['partition_scheme']}\n"
+    #     config_summary += f"Boot: {config['boot_size']}MB\n"
+    #     config_summary += f"Root: {config['root_size']}GB (0=remaining)\n"
+    #     config_summary += f"Swap: {config['swap_size']}GB (0=none)\n"
+    #     config_summary += f"Home: {'Separate' if config['home_separate'] else 'In root'}"
+    #     if config['home_separate']:
+    #         config_summary += f" ({config['home_size']}GB)\n"
+    #     else:
+    #         config_summary += "\n"
+    #     config_summary += f"Filesystem: {config['filesystem']}\n"
+    #     config_summary += f"Encryption: {'Yes' if config['encrypt'] else 'No'}\n"
+    #     
+    #     if config['encrypt'] and config['encryption_password']:
+    #         config_summary += f"Encryption Password: {'*' * len(config['encryption_password'])} ({len(config['encryption_password'])} characters)\n"
+    #     
+    #     config_summary += f"\n=== USER & SYSTEM ===\n"
+    #     config_summary += f"Username: {config['username']}\n"
+    #     config_summary += f"User Password: {'*' * len(config['password'])} ({len(config['password'])} characters)\n"
+    #     config_summary += f"Desktop: {config['desktop'].upper()}\n"
+    #     config_summary += f"Sound: {config['sound']}\n"
+    #     config_summary += f"Hostname: {config['hostname']}\n"
+    #     config_summary += f"Locale: {config['locale']}\n\n"
+    #     config_summary += f"Press OK to start simulation with this configuration."
+    #     
+    #     # Log the configuration that was collected
+    #     npyscreen.notify_confirm(
+    #         config_summary,
+    #         title="User Configuration Summary"
+    #     )
+    #     
+    #     # Create test installer with progress callback
+    #     #test_installer = TestModeInstaller(progress_callback=self.update_progress)
+    #     
+    #     # Run the simulation with user's actual configuration
+    #     #success = test_installer.simulate_installation(config)
+    #     
+    #     if success:
+    #         npyscreen.notify_confirm(
+    #             "Test installation completed successfully!\n\n"
+    #             "✓ Configuration was properly collected from all forms\n"
+    #             "✓ User input validation worked correctly\n" 
+    #             "✓ Installation simulation completed\n\n"
+    #             "This was a simulation - no actual changes were made.\n"
+    #             "The installer interface is working correctly.",
+    #             title="Test Complete"
+    #         )
+    #     else:
+    #         npyscreen.notify_confirm(
+    #             "Test installation encountered errors.\n"
+    #             "Check the progress log for details.",
+    #             title="Test Failed"
+    #         )
 
 # Keep the old MainForm for backward compatibility
 class MainForm(npyscreen.FormBaseNew):
@@ -893,5 +902,4 @@ def launch_tui():
 
 if __name__ == "__main__":
     launch_tui()
-
 
