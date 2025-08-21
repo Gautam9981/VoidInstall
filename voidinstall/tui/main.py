@@ -6,7 +6,7 @@ import sys
 # Add the parent directory to Python path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from test_mode import is_void_linux, is_test_mode, TestModeInstaller, create_test_config
+#from test_mode import is_void_linux, is_test_mode, TestModeInstaller, create_test_config
 from lib.dependencies import install_partitioning_tools, check_and_install_tool
 
 # Check if we're running on Void Linux
@@ -893,4 +893,5 @@ def launch_tui():
 
 if __name__ == "__main__":
     launch_tui()
+
 
