@@ -104,10 +104,10 @@ class DiskConfigForm(npyscreen.ActionForm):
         self.nextrely += 1
         # Password fields with separate labels for better positioning
         self.add(npyscreen.FixedText, value="Encryption password:", editable=False)
-        self.encrypt_pass = self.add(npyscreen.TitlePassword, name="", value="", scroll_exit=True)
+        self.encrypt_pass = self.add(npyscreen.PasswordEntry, value="", scroll_exit=True)
         
         self.add(npyscreen.FixedText, value="Confirm password:", editable=False)
-        self.encrypt_pass_confirm = self.add(npyscreen.TitlePassword, name="", value="", scroll_exit=True)
+        self.encrypt_pass_confirm = self.add(npyscreen.PasswordEntry, value="", scroll_exit=True)
         
         self.nextrely += 1
         self.add(npyscreen.FixedText, value="• cfdisk: Interactive partition editor", editable=False)
@@ -223,10 +223,10 @@ class UserConfigForm(npyscreen.ActionForm):
         # Password section
         self.add(npyscreen.FixedText, value="Password Configuration:", editable=False)
         self.add(npyscreen.FixedText, value="Password:", editable=False)
-        self.password = self.add(npyscreen.TitlePassword, name="", max_width=40, scroll_exit=True)
+        self.password = self.add(npyscreen.PasswordEntry, max_width=40, scroll_exit=True)
         
         self.add(npyscreen.FixedText, value="Confirm Password:", editable=False)
-        self.password_confirm = self.add(npyscreen.TitlePassword, name="", max_width=40, scroll_exit=True)
+        self.password_confirm = self.add(npyscreen.PasswordEntry, max_width=40, scroll_exit=True)
         
         self.nextrely += 2
         
