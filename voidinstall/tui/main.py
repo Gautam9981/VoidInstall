@@ -445,6 +445,7 @@ class InstallProgressForm(npyscreen.ActionForm):
             import subprocess
         except ImportError as e:
             npyscreen.notify_confirm(f"Import error: {e}. Cannot proceed with installation.", title="Import Error")
+            self.parentApp.switchForm(None)  # Exit application
             return
 
         # Get configuration from the app
@@ -592,6 +593,7 @@ class InstallProgressForm(npyscreen.ActionForm):
             error_msg = f"[ERROR] {str(e)}\n{traceback.format_exc()}"
             self.update_progress(error_msg)
             npyscreen.notify_confirm(f"Installation failed: {str(e)}", title="Installation Error")
+            self.parentApp.switchForm(None)  # Exit application after fatal error
     
     def update_progress(self, message):
         """Update the progress display with a rolling log, avoiding zigzag/wrapping issues"""
@@ -804,6 +806,8 @@ class MainForm(npyscreen.FormBaseNew):
         except Exception as e:
             error_msg = f"[ERROR] {str(e)}\n{traceback.format_exc()}"
             self.update_status(error_msg)
+            npyscreen.notify_confirm(f"Installation failed: {str(e)}", title="Installation Error")
+            sys.exit(1)  # Exit application after fatal error
 
 def launch_tui():
     import sys
