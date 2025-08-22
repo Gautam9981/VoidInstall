@@ -68,36 +68,55 @@ def list_disks():
 def unmount_all_partitions(disk):
     """Unmount all partitions on a disk before wiping"""
     import subprocess
-    try:
-        # Get all mounted partitions for this disk
-        result = run_command(["lsblk", "-ln", "-o", "NAME,MOUNTPOINT", disk], capture_output=True, text=True, check=False)
-        if result.returncode == 0:
-            lines = result.stdout.strip().split('\n')
-            for line in lines:
-                if line.strip():
-                    parts = line.split()
-                    if len(parts) >= 2 and parts[1] != '':  # Has a mount point
-                        device_name = parts[0]
-                        # Convert device name to full path
-                        if not device_name.startswith('/dev/'):
-                            device_path = f"/dev/{device_name}"
-                        else:
-                            device_path = device_name
-                        
-                        # Try to unmount
-                        try:
-                            run_command(["umount", "-f", device_path], capture_output=True, check=False)
-                            print(f"Unmounted {device_path}")
-                        except:
-                            pass  # Ignore unmount errors
-    except:
-        pass  # Ignore any errors in detection
+    import time
+    
+    # Multiple aggressive unmount attempts
+    for attempt in range(5):
+        try:
+            # Get all mounted partitions for this disk
+            result = run_command(["lsblk", "-ln", "-o", "NAME,MOUNTPOINT", disk], capture_output=True, text=True, check=False)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                for line in lines:
+                    if line.strip():
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1] != '':  # Has a mount point
+                            device_name = parts[0]
+                            # Convert device name to full path
+                            if not device_name.startswith('/dev/'):
+                                device_path = f"/dev/{device_name}"
+                            else:
+                                device_path = device_name
+                            
+                            # Try multiple unmount methods
+                            try:
+                                run_command(["umount", "-f", device_path], capture_output=True, check=False)
+                                run_command(["umount", "-l", device_path], capture_output=True, check=False)  # Lazy unmount
+                                run_command(["umount", device_path], capture_output=True, check=False)
+                                print(f"Unmounted {device_path}")
+                            except:
+                                pass  # Ignore unmount errors
+            
+            # Also try to unmount all partitions of this disk directly
+            for i in range(1, 16):  # Check partitions 1-15
+                part_path = get_partition_name(disk, i)
+                try:
+                    run_command(["umount", "-f", part_path], capture_output=True, check=False)
+                    run_command(["umount", "-l", part_path], capture_output=True, check=False)
+                    run_command(["umount", part_path], capture_output=True, check=False)
+                except:
+                    pass
+            
+            time.sleep(1)  # Wait between attempts
+        except:
+            pass  # Ignore any errors in detection
 
 def wipe_disk(disk):
     """Wipe disk using available partitioning tool"""
     import shutil
+    import time
     
-    # First, unmount all partitions on this disk
+    # First, unmount all partitions on this disk (multiple attempts)
     unmount_all_partitions(disk)
     
     # Close any active LUKS/encryption on partitions
@@ -116,6 +135,17 @@ def wipe_disk(disk):
                             pass
     except:
         pass
+    
+    # Kill any processes using the disk
+    try:
+        run_command(["fuser", "-km", disk], capture_output=True, check=False)
+        time.sleep(2)
+    except:
+        pass
+    
+    # Final unmount attempt
+    unmount_all_partitions(disk)
+    time.sleep(2)
     
     # Wipe the disk using available tools
     if shutil.which("sgdisk"):
@@ -137,6 +167,7 @@ def wipe_disk(disk):
     # Force kernel to re-read partition table
     try:
         run_command(["partprobe", disk], capture_output=True, check=False)
+        time.sleep(2)
     except:
         pass  # Ignore if partprobe fails
 
@@ -239,36 +270,38 @@ def format_partitions(boot_part, root_part, encrypt=False):
     # Force unmount and wait before formatting
     import time
     
+    def is_mounted(device):
+        """Check if a device is mounted"""
+        try:
+            result = run_command(["mount"], capture_output=True, text=True, check=False)
+            return device in result.stdout
+        except:
+            return False
+    
+    def force_unmount(device):
+        """Aggressively unmount a device"""
+        for attempt in range(5):
+            try:
+                run_command(["umount", "-f", device], capture_output=True, check=False)
+                run_command(["umount", "-l", device], capture_output=True, check=False)  # Lazy unmount
+                run_command(["umount", device], capture_output=True, check=False)
+            except:
+                pass
+            time.sleep(1)
+            if not is_mounted(device):
+                break
+        
+        # Final check
+        if is_mounted(device):
+            raise RuntimeError(f"Unable to unmount {device} - device is busy")
+    
     # Format EFI partition if UEFI
     if boot_part:
-        # Ensure EFI partition is unmounted before formatting
-        for attempt in range(3):
-            try:
-                run_command(["umount", "-f", boot_part], capture_output=True, check=False)
-                run_command(["umount", boot_part], capture_output=True, check=False)
-            except:
-                pass  # Ignore if already unmounted
-            time.sleep(1)
-        
-        # Wait for device to be free
-        time.sleep(2)
-        
+        force_unmount(boot_part)
         run_command(["mkfs.fat", "-F32", boot_part])
     
     # Only format root partition if not using encryption
     # (encryption setup and formatting is handled separately in main installer)
     if not encrypt:
-        # Ensure root partition is unmounted before formatting
-        for attempt in range(3):
-            try:
-                run_command(["umount", "-f", root_part], capture_output=True, check=False)
-                run_command(["umount", root_part], capture_output=True, check=False)
-            except:
-                pass  # Ignore if already unmounted
-            time.sleep(1)
-        
-        # Wait for device to be free
-        time.sleep(2)
-        
-        # Force format even if the device seems busy
+        force_unmount(root_part)
         run_command(["mkfs.ext4", "-F", root_part])
