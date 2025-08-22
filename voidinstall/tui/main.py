@@ -111,7 +111,21 @@ class DiskConfigForm(npyscreen.ActionForm):
         
         self.nextrely += 1
         self.add(npyscreen.FixedText, value="• cfdisk: Interactive partition editor", editable=False)
-        self.add(npyscreen.FixedText, value="• Auto: Automatic EFI+Root+Swap layout", editable=False)
+        
+        # Detect boot mode to show appropriate auto partition info
+        import os
+        uefi = os.path.exists("/sys/firmware/efi")
+        if uefi:
+            self.add(npyscreen.FixedText, value="• Auto: Automatic UEFI layout (EFI+Root+Swap)", editable=False)
+            self.add(npyscreen.FixedText, value="  - EFI System Partition: 512MB (FAT32)", editable=False)
+            self.add(npyscreen.FixedText, value="  - Root Partition: Remaining space (ext4)", editable=False)
+            self.add(npyscreen.FixedText, value="  - Optional: Swap partition", editable=False)
+        else:
+            self.add(npyscreen.FixedText, value="• Auto: Automatic Legacy/MBR layout (Root+Swap)", editable=False)
+            self.add(npyscreen.FixedText, value="  - Root Partition: All space (ext4)", editable=False)
+            self.add(npyscreen.FixedText, value="  - Optional: Swap partition", editable=False)
+            self.add(npyscreen.FixedText, value="  - Boot: Installed to MBR", editable=False)
+        
         self.add(npyscreen.FixedText, value="• Manual: Configure partition sizes manually", editable=False)
     
     def on_ok(self):
@@ -280,7 +294,22 @@ class SystemConfigForm(npyscreen.ActionForm):
         self.hostname = self.add(npyscreen.Textfield, value="voidlinux", max_width=40, scroll_exit=True)
         
         self.add(npyscreen.FixedText, value="Locale:", editable=False)
-        self.locale = self.add(npyscreen.Textfield, value="en_US.UTF-8", max_width=40, scroll_exit=True)
+        self.locale = self.add(npyscreen.SelectOne,
+                              max_height=5,
+                              value=[0],
+                              values=["en_US.UTF-8", "en_GB.UTF-8", "de_DE.UTF-8", "fr_FR.UTF-8", "es_ES.UTF-8"],
+                              scroll_exit=True,
+                              exit_left=True,
+                              exit_right=True)
+        
+        self.add(npyscreen.FixedText, value="Timezone:", editable=False)
+        self.timezone = self.add(npyscreen.SelectOne,
+                                max_height=6,
+                                value=[0],
+                                values=["UTC", "America/New_York", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Tokyo"],
+                                scroll_exit=True,
+                                exit_left=True,
+                                exit_right=True)
         
         self.nextrely += 2
         
@@ -311,10 +340,11 @@ class SystemConfigForm(npyscreen.ActionForm):
         # Configuration help
         self.add(npyscreen.FixedText, value="Configuration Help:", editable=False)
         info_text = [
-            "• Hostname: Network name for your computer",
-            "• Locale: Language and regional settings", 
-            "• Desktop: Graphical user interface",
-            "• Audio: Sound system for multimedia"
+            "• Hostname: Network name for your computer (letters, numbers, hyphens)",
+            "• Locale: Language and regional settings for the system", 
+            "• Timezone: Geographic location for time settings",
+            "• Desktop: Graphical user interface environment",
+            "• Audio: Sound system for multimedia applications"
         ]
         
         for line in info_text:
@@ -324,10 +354,6 @@ class SystemConfigForm(npyscreen.ActionForm):
         # Validate inputs
         if not self.hostname.value:
             npyscreen.notify_confirm("Please enter a hostname.", title="Validation Error")
-            return
-            
-        if not self.locale.value:
-            npyscreen.notify_confirm("Please enter a locale.", title="Validation Error")
             return
         
         # Basic hostname validation
@@ -347,11 +373,18 @@ class SystemConfigForm(npyscreen.ActionForm):
         sound_index = getattr(self.sound, 'value', [0])[0] 
         sound = self.sound.values[sound_index].lower()
         
+        locale_index = getattr(self.locale, 'value', [0])[0]
+        locale = self.locale.values[locale_index]
+        
+        timezone_index = getattr(self.timezone, 'value', [0])[0]
+        timezone = self.timezone.values[timezone_index]
+        
         setattr(self.parentApp, 'system_config', {
             'desktop': desktop,
             'sound': sound,
             'hostname': hostname,
-            'locale': self.locale.value.strip()
+            'locale': locale,
+            'timezone': timezone
         })
         self.parentApp.switchForm('INSTALL')
     
@@ -401,10 +434,11 @@ class InstallProgressForm(npyscreen.ActionForm):
         summary_lines.append("║                                         ║")
         summary_lines.append("║ USER & SYSTEM                           ║")
         summary_lines.append(f"║ Username: {user_config.get('username', 'Not configured'):<29} ║")
-        summary_lines.append(f"║ Desktop: {system_config.get('desktop', 'Not configured').upper():<30} ║")
-        summary_lines.append(f"║ Sound: {system_config.get('sound', 'Not configured'):<32} ║")
         summary_lines.append(f"║ Hostname: {system_config.get('hostname', 'Not configured'):<29} ║")
         summary_lines.append(f"║ Locale: {system_config.get('locale', 'Not configured'):<31} ║")
+        summary_lines.append(f"║ Timezone: {system_config.get('timezone', 'Not configured'):<29} ║")
+        summary_lines.append(f"║ Desktop: {system_config.get('desktop', 'Not configured').upper():<30} ║")
+        summary_lines.append(f"║ Sound: {system_config.get('sound', 'Not configured'):<32} ║")
         summary_lines.append("║                                         ║")
         summary_lines.append("╚═════════════════════════════════════════╝")
         summary_lines.append("")
@@ -462,6 +496,7 @@ class InstallProgressForm(npyscreen.ActionForm):
         sound = system_config.get('sound', 'pipewire')
         locale = system_config.get('locale', 'en_US.UTF-8')
         hostname = system_config.get('hostname', 'voidlinux')
+        timezone = system_config.get('timezone', 'UTC')
 
         # Update summary - for now, just display without values assignment
         summary_lines = [
@@ -572,6 +607,13 @@ class InstallProgressForm(npyscreen.ActionForm):
             self.update_progress("[INSTALL] Setting hostname...")
             with open("/mnt/etc/hostname", "w") as f:
                 f.write(f"{hostname}\n")
+            
+            self.update_progress("[INSTALL] Setting timezone...")
+            # Set timezone using symbolic link
+            self.run_command_with_progress(["ln", "-sf", f"/usr/share/zoneinfo/{timezone}", "/mnt/etc/localtime"], "[TIMEZONE]")
+            # Set timezone in /etc/timezone for some applications
+            with open("/mnt/etc/timezone", "w") as f:
+                f.write(f"{timezone}\n")
 
             self.update_progress("[INSTALL] Creating user and locking root...")
             create_user_chroot(username)
@@ -657,15 +699,24 @@ class InstallProgressForm(npyscreen.ActionForm):
         
         # Update the entry_widget.values for BoxTitle (MultiLine)
         self.progress.entry_widget.values = self.progress_log
+        
+        # Add a small delay to prevent display conflicts and ensure proper refresh
+        import time
+        time.sleep(0.01)  # 10ms delay to prevent rapid-fire updates
+        
         self.progress.entry_widget.display()
-        # Force a screen refresh to show the update immediately
-        self.display()
+        
+        # Force a complete screen refresh less frequently to avoid conflicts
+        self._update_counter = getattr(self, '_update_counter', 0) + 1
+        if self._update_counter % 5 == 0:  # Only full refresh every 5 updates
+            self.display()
     
     def run_command_with_progress(self, cmd, message_prefix="[CMD]", **kwargs):
         """
         Run a command and display its output in the progress window
         """
         import subprocess
+        import time
         
         if isinstance(cmd, str):
             cmd = cmd.split()
@@ -690,41 +741,61 @@ class InstallProgressForm(npyscreen.ActionForm):
                 check=kwargs.get('check', True)
             )
             
+            # Batch output updates to reduce display conflicts
+            output_batch = []
+            batch_size = 3  # Process 3 lines at a time
+            
             # Display the output line by line with better formatting
             if result.stdout:
                 for line in result.stdout.splitlines():
                     line = line.strip()
                     if line:  # Only show non-empty lines
+                        formatted_line = None
+                        
                         # Clean up common package manager output patterns
                         if "downloaded" in line and "installed" in line:
                             # Summary lines - keep as is
-                            self.update_progress(f"{message_prefix} {line}")
+                            formatted_line = f"{message_prefix} {line}"
                         elif line.startswith('[') and ']' in line:
                             # Progress indicators like [*] or [29%]
-                            self.update_progress(f"{message_prefix} {line}")
+                            formatted_line = f"{message_prefix} {line}"
                         elif 'verifying' in line.lower() or 'signature' in line.lower():
                             # Verification steps
-                            self.update_progress(f"{message_prefix} {line}")
+                            formatted_line = f"{message_prefix} {line}"
                         elif 'collecting' in line.lower() or 'unpacking' in line.lower():
                             # Package processing steps
-                            self.update_progress(f"{message_prefix} {line}")
+                            formatted_line = f"{message_prefix} {line}"
                         elif 'configuring' in line.lower():
                             # Configuration steps
-                            self.update_progress(f"{message_prefix} {line}")
+                            formatted_line = f"{message_prefix} {line}"
                         elif line.endswith('successfully.'):
                             # Success messages
-                            self.update_progress(f"{message_prefix} {line}")
+                            formatted_line = f"{message_prefix} {line}"
                         elif 'avg rate:' in line or 'Size' in line:
                             # Download progress - summarize
                             parts = line.split()
                             if len(parts) > 3:
                                 pkg_name = parts[0] if not parts[0].startswith('[') else parts[1]
-                                self.update_progress(f"{message_prefix} Downloading: {pkg_name}")
+                                formatted_line = f"{message_prefix} Downloading: {pkg_name}"
                         else:
                             # Other lines - show with truncation if needed
                             if len(line) > 60:
                                 line = line[:57] + "..."
-                            self.update_progress(f"{message_prefix} {line}")
+                            formatted_line = f"{message_prefix} {line}"
+                        
+                        if formatted_line:
+                            output_batch.append(formatted_line)
+                            
+                            # Update display in batches
+                            if len(output_batch) >= batch_size:
+                                for batch_line in output_batch:
+                                    self.update_progress(batch_line)
+                                output_batch = []
+                                time.sleep(0.05)  # Small delay between batches
+                
+                # Process remaining lines
+                for batch_line in output_batch:
+                    self.update_progress(batch_line)
             
             self.update_progress(f"{message_prefix} Command completed successfully")
             return result
