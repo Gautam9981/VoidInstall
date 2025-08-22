@@ -531,7 +531,6 @@ class InstallProgressForm(npyscreen.ActionForm):
             self.update_progress(boot_msg)
 
             self.update_progress("[INSTALL] Installing base system...")
-            enable_repos()
             
             # Install appropriate GRUB package based on boot mode
             grub_pkg = "grub-x86_64-efi" if uefi else "grub"
@@ -542,6 +541,10 @@ class InstallProgressForm(npyscreen.ActionForm):
             base_packages.extend(recommended_packages['audio_firmware'])
             
             install_packages("/mnt", *base_packages)
+            
+            # Enable additional repos after base system is installed
+            self.update_progress("[INSTALL] Enabling additional repositories...")
+            enable_repos()
             upgrade_packages()
 
             self.update_progress("[INSTALL] Configuring locale...")
