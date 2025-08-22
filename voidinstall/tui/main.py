@@ -25,6 +25,7 @@ class VoidInstallTUI(npyscreen.NPSAppManaged):
         self.addForm('USER', UserConfigForm, name="Void Linux Installer - User Configuration")
         self.addForm('SYSTEM', SystemConfigForm, name="Void Linux Installer - System Configuration")
         self.addForm('INSTALL', InstallProgressForm, name="Void Linux Installer - Installation Progress")
+        self.addForm('COMPLETE', InstallCompleteForm, name="Void Linux Installer - Installation Complete")
 
 class WelcomeForm(npyscreen.ActionForm):
     def create(self):
@@ -367,16 +368,16 @@ class InstallProgressForm(npyscreen.ActionForm):
         self.progress_log = []
         self.progress = self.add(npyscreen.BoxTitle,
                                  name="Progress Log",
-                                 max_height=8,
+                                 max_height=12,  # Increased height for more output
                                  values=["Ready to start installation. Press OK to begin or Cancel to go back."],
                                  editable=False)
 
-        self.nextrely += 2
+        self.nextrely += 1
 
         # Installation summary
         self.add(npyscreen.FixedText, value="Configuration Summary:", editable=False)
         self.summary = self.add(npyscreen.MultiLineEdit,
-                               max_height=10,
+                               max_height=8,  # Reduced to make room for larger progress window
                                editable=False)
 
         # Show configuration summary
@@ -515,20 +516,31 @@ class InstallProgressForm(npyscreen.ActionForm):
             
             from lib.disk.utils import partition_disk, format_partitions
             boot_part, root_part = partition_disk(disk, encrypt)
-            format_partitions(boot_part, root_part, encrypt)
+            
+            # Show the actual formatting commands
+            self.update_progress("[INSTALL] Formatting partitions...")
+            if boot_part:
+                self.update_progress(f"[INSTALL] Formatting EFI partition {boot_part}...")
+                self.run_command_with_progress(["mkfs.fat", "-F32", boot_part], "[FORMAT]")
+            
+            if not encrypt:
+                self.update_progress(f"[INSTALL] Formatting root partition {root_part}...")
+                self.run_command_with_progress(["mkfs.ext4", "-F", root_part], "[FORMAT]")
             
             if encrypt:
                 luks_mapper = luks_format(root_part, encrypt_password)
                 root_device = luks_mapper
                 # Format the encrypted device
                 self.update_progress("[INSTALL] Formatting encrypted filesystem...")
-                format_ext4(root_device)
+                self.update_progress(f"[INSTALL] Formatting encrypted device {root_device}...")
+                self.run_command_with_progress(["mkfs.ext4", "-F", root_device], "[FORMAT]")
             else:
                 root_device = root_part
 
             self.update_progress("[INSTALL] Setting up filesystem...")
-            # Don't format again - format_partitions() already handled this for non-encrypted
-            mount_root(root_device)
+            # Show mounting commands
+            self.update_progress(f"[INSTALL] Mounting root filesystem {root_device} to /mnt...")
+            self.run_command_with_progress(["mount", root_device, "/mnt"], "[MOUNT]")
             
             # Set up boot partitions
             boot_msg = setup_boot_partitions(disk, root_device, "/mnt", uefi)
@@ -544,7 +556,10 @@ class InstallProgressForm(npyscreen.ActionForm):
             base_packages.extend(recommended_packages['microcode'])
             base_packages.extend(recommended_packages['audio_firmware'])
             
-            install_packages("/mnt", *base_packages)
+            # Show the actual package installation command
+            self.update_progress(f"[INSTALL] Installing packages: {' '.join(base_packages)}")
+            xbps_cmd = ["xbps-install", "-S", "-y", "-r", "/mnt", "-R", "https://repo-default.voidlinux.org/current"] + base_packages
+            self.run_command_with_progress(xbps_cmd, "[XBPS]")
             
             # Enable additional repos after base system is installed
             self.update_progress("[INSTALL] Enabling additional repositories...")
@@ -564,7 +579,13 @@ class InstallProgressForm(npyscreen.ActionForm):
             lock_root_chroot()
 
             self.update_progress("[INSTALL] Installing graphics, desktop, and sound...")
-            install_packages("/mnt", de_pkg, *graphics_packages)
+            
+            # Install desktop environment with visible commands
+            desktop_packages = [de_pkg] + graphics_packages
+            self.update_progress(f"[INSTALL] Installing desktop packages: {' '.join(desktop_packages)}")
+            desktop_cmd = ["xbps-install", "-S", "-y", "-r", "/mnt", "-R", "https://repo-default.voidlinux.org/current"] + desktop_packages
+            self.run_command_with_progress(desktop_cmd, "[XBPS]")
+            
             sound_msg = install_sound("/mnt", sound_system, recommended_packages['audio_firmware'])
             self.update_progress(sound_msg)
 
@@ -590,7 +611,19 @@ class InstallProgressForm(npyscreen.ActionForm):
             install_grub_chroot("/mnt", disk)
 
             self.update_progress("[INSTALL] Installation complete!")
-            npyscreen.notify_confirm("Installation completed successfully! You can now reboot into your new Void Linux system.", title="Installation Complete")
+            
+            # Store installation results for completion form
+            setattr(self.parentApp, 'install_success', True)
+            setattr(self.parentApp, 'install_config', {
+                'disk': disk,
+                'desktop': desktop,
+                'username': username,
+                'hostname': hostname,
+                'encrypted': encrypt
+            })
+            
+            # Switch to completion form instead of just showing notification
+            self.parentApp.switchForm('COMPLETE')
             
         except Exception as e:
             error_msg = f"[ERROR] {str(e)}\n{traceback.format_exc()}"
@@ -600,12 +633,190 @@ class InstallProgressForm(npyscreen.ActionForm):
     
     def update_progress(self, message):
         """Update the progress display with a rolling log, avoiding zigzag/wrapping issues"""
-        self.progress_log.append(str(message))
-        if len(self.progress_log) > 50:
-            self.progress_log = self.progress_log[-50:]
+        # Split long lines to fit in the window
+        max_width = 70  # Adjust based on typical terminal width
+        
+        if len(str(message)) > max_width:
+            # Split long lines at word boundaries
+            words = str(message).split()
+            current_line = ""
+            for word in words:
+                if len(current_line + " " + word) <= max_width:
+                    current_line += " " + word if current_line else word
+                else:
+                    if current_line:
+                        self.progress_log.append(current_line)
+                    current_line = word
+            if current_line:
+                self.progress_log.append(current_line)
+        else:
+            self.progress_log.append(str(message))
+        
+        if len(self.progress_log) > 100:  # Increased buffer for more command output
+            self.progress_log = self.progress_log[-100:]
+        
         # Update the entry_widget.values for BoxTitle (MultiLine)
         self.progress.entry_widget.values = self.progress_log
         self.progress.entry_widget.display()
+        # Force a screen refresh to show the update immediately
+        self.display()
+    
+    def run_command_with_progress(self, cmd, message_prefix="[CMD]", **kwargs):
+        """
+        Run a command and display its output in the progress window
+        """
+        import subprocess
+        
+        if isinstance(cmd, str):
+            cmd = cmd.split()
+        
+        # Commands that don't need sudo (read-only operations)
+        readonly_commands = ['lsblk', 'ls', 'cat', 'echo', 'which', 'find', 'test', 'stat']
+        needs_sudo = not any(cmd[0].endswith(readonly_cmd) for readonly_cmd in readonly_commands)
+        
+        # Always use sudo for privileged operations in live installer
+        if needs_sudo:
+            cmd = ['sudo'] + cmd
+        
+        self.update_progress(f"{message_prefix} Running: {' '.join(cmd[-3:])}")  # Show last 3 args to avoid long lines
+        
+        try:
+            # Run the process and capture all output
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Combine stderr with stdout
+                text=True,
+                check=kwargs.get('check', True)
+            )
+            
+            # Display the output line by line with better formatting
+            if result.stdout:
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    if line:  # Only show non-empty lines
+                        # Clean up common package manager output patterns
+                        if "downloaded" in line and "installed" in line:
+                            # Summary lines - keep as is
+                            self.update_progress(f"{message_prefix} {line}")
+                        elif line.startswith('[') and ']' in line:
+                            # Progress indicators like [*] or [29%]
+                            self.update_progress(f"{message_prefix} {line}")
+                        elif 'verifying' in line.lower() or 'signature' in line.lower():
+                            # Verification steps
+                            self.update_progress(f"{message_prefix} {line}")
+                        elif 'collecting' in line.lower() or 'unpacking' in line.lower():
+                            # Package processing steps
+                            self.update_progress(f"{message_prefix} {line}")
+                        elif 'configuring' in line.lower():
+                            # Configuration steps
+                            self.update_progress(f"{message_prefix} {line}")
+                        elif line.endswith('successfully.'):
+                            # Success messages
+                            self.update_progress(f"{message_prefix} {line}")
+                        elif 'avg rate:' in line or 'Size' in line:
+                            # Download progress - summarize
+                            parts = line.split()
+                            if len(parts) > 3:
+                                pkg_name = parts[0] if not parts[0].startswith('[') else parts[1]
+                                self.update_progress(f"{message_prefix} Downloading: {pkg_name}")
+                        else:
+                            # Other lines - show with truncation if needed
+                            if len(line) > 60:
+                                line = line[:57] + "..."
+                            self.update_progress(f"{message_prefix} {line}")
+            
+            self.update_progress(f"{message_prefix} Command completed successfully")
+            return result
+            
+        except subprocess.CalledProcessError as e:
+            self.update_progress(f"{message_prefix} Command failed with exit code {e.returncode}")
+            if e.stdout:
+                for line in e.stdout.splitlines():
+                    if line.strip():
+                        self.update_progress(f"{message_prefix} ERROR: {line.strip()}")
+            raise
+        except Exception as e:
+            self.update_progress(f"{message_prefix} Error: {str(e)}")
+            raise
+
+class InstallCompleteForm(npyscreen.ActionForm):
+    def create(self):
+        self.add(npyscreen.TitleText, name="Installation Complete!", editable=False)
+        self.nextrely += 2
+        
+        # Get installation details
+        install_config = getattr(self.parentApp, 'install_config', {})
+        disk = install_config.get('disk', 'Unknown')
+        desktop = install_config.get('desktop', 'Unknown').upper()
+        username = install_config.get('username', 'Unknown')
+        hostname = install_config.get('hostname', 'Unknown')
+        encrypted = install_config.get('encrypted', False)
+        
+        # Success message with actual configuration
+        success_text = [
+            "🎉 Congratulations! Void Linux has been successfully installed!",
+            "",
+            "Your System Configuration:",
+            f"• Target Disk: {disk}",
+            f"• Desktop Environment: {desktop}",
+            f"• Username: {username}",
+            f"• Hostname: {hostname}",
+            f"• Encryption: {'Yes' if encrypted else 'No'}",
+            "",
+            "Installation Summary:",
+            "✓ Base system installed and configured",
+            "✓ Bootloader (GRUB) installed",
+            "✓ User account created with sudo access",
+            "✓ Desktop environment installed",
+            "✓ Audio system configured",
+            "✓ Network configuration copied",
+            "",
+            "Next Steps:",
+            "1. Remove the installation media",
+            "2. Reboot your computer",
+            "3. Boot into your new Void Linux system",
+            "4. Log in with your user account",
+            "",
+            "Post-Installation Tips:",
+            "• Update your system: sudo xbps-install -Su",
+            "• Install additional software: sudo xbps-install <package>",
+            "• Read the Void Linux Handbook for more information",
+            "",
+            "Press 'Reboot' to restart now or 'Exit' to quit the installer."
+        ]
+        
+        for line in success_text:
+            self.add(npyscreen.FixedText, value=line, editable=False)
+        
+        self.nextrely += 2
+        
+        # Add reboot and exit buttons
+        self.add(npyscreen.ButtonPress, name="Reboot System", when_pressed_function=self.reboot_system)
+        self.add(npyscreen.ButtonPress, name="Exit Installer", when_pressed_function=self.exit_installer)
+    
+    def reboot_system(self):
+        """Reboot the system"""
+        response = npyscreen.notify_yes_no("Are you sure you want to reboot now?", title="Confirm Reboot")
+        if response:
+            import subprocess
+            try:
+                subprocess.run(["reboot"], check=True)
+            except:
+                npyscreen.notify_confirm("Unable to reboot automatically. Please reboot manually.", title="Reboot Required")
+                self.parentApp.switchForm(None)
+    
+    def exit_installer(self):
+        """Exit the installer"""
+        self.parentApp.switchForm(None)
+    
+    def on_ok(self):
+        """Default OK action - exit installer"""
+        self.exit_installer()
+    
+    def on_cancel(self):
+        """Default Cancel action - exit installer"""
+        self.exit_installer()
 
 # Keep the old MainForm for backward compatibility
 class MainForm(npyscreen.FormBaseNew):
