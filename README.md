@@ -146,26 +146,8 @@ python3 -c "from lib.disk.utils import list_partitions; list_partitions('/dev/sd
 - **VMware** - VMware virtualized graphics
 - **Generic** - Kernel modesetting (fallback)
 
-## Troubleshooting
 
-### Import Errors
-
-```bash
-# Ensure you're in the voidinstall directory
-cd /path/to/voidinstall
-
-# Check Python path
-export PYTHONPATH="$(pwd):$PYTHONPATH"
-```
-
-### Permission Errors
-
-```bash
-# Ensure running as root
-sudo python3 -m tui.main
-```
-
-### Missing Dependencies
+### Dependencies
 
 ```bash
 # Install missing packages
