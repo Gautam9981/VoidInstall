@@ -231,19 +231,4 @@ pip3 install npyscreen
 - **Use on dedicated hardware** or spare drives
 - **Understand the risks** of disk partitioning
 
-## Project Structure
 
-```
-voidinstall/
-├── lib/                    # Core modules
-│   ├── authentication/     # User management
-│   ├── boot/              # Bootloader (GRUB)
-│   ├── crypt/             # LUKS encryption
-│   ├── disk/              # Disk operations
-│   ├── locale/            # Locale configuration
-│   ├── packages/          # Package management (xbps)
-│   └── sound.py           # Sound system setup
-├── tui/                   # Text User Interface
-│   └── main.py           # TUI application
-└── README.md             # This file
-```
