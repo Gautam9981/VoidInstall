@@ -37,7 +37,7 @@ sudo xbps-install -S
 sudo xbps-install -y python3 python3-pip git
 
 # Install npyscreen for TUI
-pip3 install npyscreen
+pip3 install python3-textual
 ```
 
 ### 3. Get VoidInstall
@@ -145,15 +145,6 @@ python3 -c "from lib.disk.utils import list_partitions; list_partitions('/dev/sd
 - **NVIDIA** - NVIDIA proprietary drivers (`nvidia*`)
 - **VMware** - VMware virtualized graphics
 - **Generic** - Kernel modesetting (fallback)
-
-
-### Dependencies
-
-```bash
-# Install missing packages
-sudo xbps-install -S python3
-sudo xbps-install -S python3-textual
-```
 
 ## Warning
 
