@@ -123,4 +123,47 @@ export PYTHONIOENCODING=utf-8
 # Launch the TUI (with fallback options like docker-test.sh)
 print_success "Starting VoidInstall TUI..."
 
+# Add warning about real installation
+print_warning "=========================================="
+print_warning "  REAL INSTALLATION MODE"
+print_warning "  This will modify your system!"
+print_warning "=========================================="
+echo
+read -p "Continue with real VoidInstall? (y/N): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    print_info "Installation cancelled"
+    exit 0
+fi
+
+echo "Starting VoidInstall TUI..."
+
+# Primary launch attempt
+if python3 tui/main.py; then
+    print_success "VoidInstall completed successfully"
+else
+    EXIT_CODE=$?
+    print_warning "TUI failed with exit code: $EXIT_CODE"
+    print_info "Trying alternative launch method..."
+    
+    if python3 -c 'import tui.main; tui.main.launch_tui()'; then
+        print_success "Alternative launch completed successfully"
+    else
+        print_error "Alternative launch also failed"
+        print_info "Available debugging commands:"
+        print_info "  - python3 tui/main.py          : Direct TUI launch"
+        print_info "  - lsblk                         : List block devices"
+        print_info "  - fdisk -l                      : List all disks"
+        
+        read -p "Drop to interactive shell for debugging? (y/N): " debug_shell
+        if [[ "$debug_shell" =~ ^[Yy]$ ]]; then
+            print_info "Entering interactive shell..."
+            print_info "Type 'exit' to return"
+            /bin/bash
+        fi
+    fi
+fi
+
+print_info "VoidInstall Native Script completed"
+
 
