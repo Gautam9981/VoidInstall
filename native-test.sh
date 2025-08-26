@@ -118,7 +118,6 @@ export VOID_INSTALLER_TEST_MODE=1
 export TERM=xterm-256color
 export PYTHONUNBUFFERED=1
 export PYTHONIOENCODING=utf-8
-export TEST_DISK="$LOOP_DEVICE"
 export PYTHONPATH="$VOIDINSTALL_DIR:$PYTHONPATH"
 
 # Change to the voidinstall directory
