@@ -147,6 +147,7 @@ class DiskScreen(Screen):
             filesystem = self.query_one("#filesystem", Select).value
             
             encryption = self.query_one("#encryption", Checkbox).value
+            enc_pass = None  # Initialize variable
             if encryption:
                 enc_pass = self.query_one("#enc_pass", Input).value
                 enc_confirm = self.query_one("#enc_pass_confirm", Input).value
@@ -155,12 +156,18 @@ class DiskScreen(Screen):
                     return
             
             # Store automatic partitioning configuration
-            setattr(self.app, "partition_config", {
+            partition_config = {
                 'disk': disk,
                 'method': 'auto',
                 'filesystem': filesystem,
                 'encryption': encryption
-            })
+            }
+            
+            # Store encryption password if encryption is enabled
+            if encryption and enc_pass:
+                partition_config['encryption_password'] = enc_pass
+            
+            setattr(self.app, "partition_config", partition_config)
             
             self.app.push_screen(UserScreen())
 
@@ -844,19 +851,44 @@ read
                         
                         # Format root partition
                         if encryption:
+                            from lib.crypt.luks import luks_format
                             log.write_line("Setting up LUKS encryption...")
-                            # LUKS setup would go here - for now just log it
+                            
+                            # Get encryption password from config
+                            enc_password = config.get('encryption_password', 'voidlinux')
+                            if not enc_password:
+                                raise Exception("Encryption enabled but no password provided")
+                            
+                            # Format with LUKS encryption
+                            luks_device = await asyncio.to_thread(luks_format, root_part, enc_password, "cryptroot")
                             log.write_line("✓ LUKS encryption configured")
-                        
-                        format_cmd = ['mkfs.ext4', '-F', root_part] if filesystem_type == 'ext4' else ['mkfs.xfs', '-f', root_part]
-                        result = await asyncio.to_thread(subprocess.run, format_cmd, capture_output=True, text=True)
-                        if result.returncode == 0:
-                            log.write_line(f"✓ Root partition formatted ({filesystem_type})")
+                            
+                            # Format the encrypted device
+                            format_cmd = ['mkfs.ext4', '-F', luks_device] if filesystem_type == 'ext4' else ['mkfs.xfs', '-f', luks_device]
+                            result = await asyncio.to_thread(subprocess.run, format_cmd, capture_output=True, text=True)
+                            if result.returncode == 0:
+                                log.write_line(f"✓ Encrypted root partition formatted ({filesystem_type})")
+                            
+                            # Store encryption info for later configuration
+                            encryption_info = {
+                                'device': root_part,
+                                'mapper': 'cryptroot',
+                                'luks_device': luks_device
+                            }
+                            setattr(app_typed, 'encryption_info', encryption_info)
+                            actual_root_device = luks_device
+                        else:
+                            # No encryption - format directly
+                            format_cmd = ['mkfs.ext4', '-F', root_part] if filesystem_type == 'ext4' else ['mkfs.xfs', '-f', root_part]
+                            result = await asyncio.to_thread(subprocess.run, format_cmd, capture_output=True, text=True)
+                            if result.returncode == 0:
+                                log.write_line(f"✓ Root partition formatted ({filesystem_type})")
+                            actual_root_device = root_part
                         
                         # Mount the automatically created partitions
                         log.write_line("Mounting partitions...")
                         await asyncio.to_thread(subprocess.run, ['mkdir', '-p', '/mnt'], check=True)
-                        await asyncio.to_thread(subprocess.run, ['mount', root_part, '/mnt'], check=True)
+                        await asyncio.to_thread(subprocess.run, ['mount', actual_root_device, '/mnt'], check=True)
                         log.write_line("✓ Root partition mounted to /mnt")
                         
                         await asyncio.to_thread(subprocess.run, ['mkdir', '-p', '/mnt/boot/efi'], check=True)
@@ -945,22 +977,271 @@ read
             log.write_line("Installing base system...")
             
             try:
-                import subprocess
-                # Install base system using xbps
-                log.write_line("Installing base packages...")
-                base_packages = ['base-system', 'grub', 'linux', 'linux-firmware']
+                from lib.packages.xbps import install_packages
+                from lib.boot.grub import detect_boot_mode
+                import subprocess                # Determine required bootloader packages based on boot mode
+                is_uefi = detect_boot_mode()
+                log.write_line(f"Detected boot mode: {'UEFI' if is_uefi else 'BIOS'}")
                 
-                for package in base_packages:
-                    log.write_line(f"Installing {package}...")
+                # Base system packages
+                base_packages = ['base-system', 'linux', 'linux-firmware', 'linux-headers']
+                
+                # Add bootloader packages based on boot mode
+                if is_uefi:
+                    base_packages.extend(['grub-x86_64-efi', 'efibootmgr'])
+                    log.write_line("Added UEFI bootloader packages")
+                else:
+                    base_packages.extend(['grub-i386-pc'])
+                    log.write_line("Added BIOS bootloader packages")
+                
+                # Add essential system packages
+                essential_packages = [
+                    'NetworkManager', 'dhcpcd', 'wpa_supplicant',
+                    'nano', 'vim', 'bash-completion', 'sudo'
+                ]
+                base_packages.extend(essential_packages)
+                
+                log.write_line(f"Installing {len(base_packages)} base packages...")
+                await asyncio.to_thread(install_packages, "/mnt", *base_packages)
+                log.write_line("✓ Base system installed")
+                
+                # Configure the installed system
+                current_task.update("Configuring System")
+                progress_text.update("Configuring system settings...")
+                log.write_line("Configuring system...")
+                
+                # Generate fstab manually (Void Linux doesn't have genfstab)
+                log.write_line("Generating fstab...")
+                
+                fstab_entries = []
+                
+                # Get filesystem info for mounted partitions
+                result = await asyncio.to_thread(subprocess.run,
+                    ['findmnt', '-D', '-o', 'TARGET,SOURCE,FSTYPE,OPTIONS', '/mnt'],
+                    capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')[1:]  # Skip header
+                    for line in lines:
+                        if line.strip():
+                            parts = line.split()
+                            if len(parts) >= 4:
+                                target = parts[0]
+                                source = parts[1]
+                                fstype = parts[2]
+                                options = parts[3]
+                                
+                                # Convert mount target to fstab format
+                                if target == '/mnt':
+                                    fstab_target = '/'
+                                elif target.startswith('/mnt/'):
+                                    fstab_target = target[4:]  # Remove /mnt prefix
+                                else:
+                                    continue
+                                
+                                # Get UUID if possible
+                                uuid_result = await asyncio.to_thread(subprocess.run,
+                                    ['blkid', '-s', 'UUID', '-o', 'value', source],
+                                    capture_output=True, text=True)
+                                
+                                if uuid_result.returncode == 0 and uuid_result.stdout.strip():
+                                    uuid = uuid_result.stdout.strip()
+                                    device = f"UUID={uuid}"
+                                else:
+                                    device = source
+                                
+                                # Set appropriate mount options and dump/pass values
+                                if fstype == 'vfat':  # EFI partition
+                                    fstab_options = 'defaults,noatime'
+                                    dump, fsck = '0', '2'
+                                elif fstab_target == '/':  # Root partition
+                                    fstab_options = 'defaults,noatime'
+                                    dump, fsck = '0', '1'
+                                else:  # Other partitions
+                                    fstab_options = 'defaults,noatime'
+                                    dump, fsck = '0', '2'
+                                
+                                fstab_entries.append(f"{device}\t{fstab_target}\t{fstype}\t{fstab_options}\t{dump}\t{fsck}")
+                
+                # Add tmpfs entries
+                fstab_entries.extend([
+                    "tmpfs\t/tmp\ttmpfs\tdefaults,nosuid,nodev\t0\t0",
+                    "tmpfs\t/var/tmp\ttmpfs\tdefaults,nosuid,nodev\t0\t0"
+                ])
+                
+                # Write fstab
+                with open('/mnt/etc/fstab', 'w') as f:
+                    f.write("# /etc/fstab: static file system information\n")
+                    f.write("# <file system>\t<mount point>\t<type>\t<options>\t<dump>\t<pass>\n")
+                    for entry in fstab_entries:
+                        f.write(f"{entry}\n")
+                
+                log.write_line("✓ fstab generated manually")
+                
+                # Configure encryption if used
+                if hasattr(app_typed, 'encryption_info') and app_typed.encryption_info:
+                    log.write_line("Configuring LUKS encryption...")
+                    encryption_info = app_typed.encryption_info
+                    uuid = None  # Initialize variable
+                    
+                    # Configure /etc/crypttab
+                    log.write_line("Setting up /etc/crypttab...")
+                    # Get UUID of the encrypted partition
                     result = await asyncio.to_thread(subprocess.run,
-                        ['xbps-install', '-S', '-y', '-r', '/mnt', package],
+                        ['blkid', '-s', 'UUID', '-o', 'value', encryption_info['device']],
                         capture_output=True, text=True)
                     if result.returncode == 0:
-                        log.write_line(f"✓ {package} installed")
+                        uuid = result.stdout.strip()
+                        crypttab_content = f"{encryption_info['mapper']} UUID={uuid} none luks\n"
+                        with open('/mnt/etc/crypttab', 'w') as f:
+                            f.write(crypttab_content)
+                        log.write_line("✓ /etc/crypttab configured")
+                        
+                        # Regenerate initramfs after creating crypttab
+                        log.write_line("Regenerating initramfs for crypttab...")
+                        result = await asyncio.to_thread(subprocess.run,
+                            ['chroot', '/mnt', 'dracut', '--force', '--hostonly'],
+                            capture_output=True, text=True)
+                        if result.returncode == 0:
+                            log.write_line("✓ Initramfs regenerated for crypttab")
+                        else:
+                            log.write_line("[yellow]Warning: Initramfs regeneration had issues[/yellow]")
                     else:
-                        log.write_line(f"[yellow]Warning: {package} installation issue[/yellow]")
+                        log.write_line("[yellow]Warning: Could not get UUID for crypttab[/yellow]")
+                    
+                    # Update fstab to use mapper device
+                    log.write_line("Updating fstab for encryption...")
+                    try:
+                        with open('/mnt/etc/fstab', 'r') as f:
+                            fstab_content = f.read()
+                        
+                        # Replace the encrypted device path with mapper path in fstab
+                        fstab_content = fstab_content.replace(encryption_info['luks_device'], f"/dev/mapper/{encryption_info['mapper']}")
+                        
+                        with open('/mnt/etc/fstab', 'w') as f:
+                            f.write(fstab_content)
+                        log.write_line("✓ fstab updated for encryption")
+                    except Exception as e:
+                        log.write_line(f"[yellow]Warning: Could not update fstab: {e}[/yellow]")
+                    
+                    # Configure GRUB for encryption (only if we have the UUID)
+                    if uuid:
+                        log.write_line("Configuring GRUB for encryption...")
+                        mapper_name = encryption_info['mapper']
+                        grub_default_content = f"""# GRUB boot loader configuration
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=5
+GRUB_DISTRIBUTOR="Void Linux"
+GRUB_CMDLINE_LINUX_DEFAULT="loglevel=4"
+GRUB_CMDLINE_LINUX="rd.luks.uuid={uuid}:{mapper_name} root=/dev/mapper/{mapper_name} rd.lvm=0"
+GRUB_PRELOAD_MODULES="luks cryptodisk part_gpt"
+GRUB_ENABLE_CRYPTODISK=y
+"""
+                        with open('/mnt/etc/default/grub', 'w') as f:
+                            f.write(grub_default_content)
+                        log.write_line("✓ GRUB configured for encryption")
+                    else:
+                        log.write_line("[yellow]Warning: Could not configure GRUB for encryption (no UUID)[/yellow]")
                 
-                log.write_line("✓ Base system installed")
+                # Configure hostname
+                hostname = "voidlinux"  # Default, should get from UserScreen
+                with open('/mnt/etc/hostname', 'w') as f:
+                    f.write(f"{hostname}\n")
+                log.write_line(f"✓ Hostname set to {hostname}")
+                
+                # Configure locale
+                locale_config = """en_US.UTF-8 UTF-8
+en_US ISO-8859-1
+"""
+                with open('/mnt/etc/default/libc-locales', 'w') as f:
+                    f.write(locale_config)
+                
+                # Set system locale
+                with open('/mnt/etc/locale.conf', 'w') as f:
+                    f.write("LANG=en_US.UTF-8\n")
+                log.write_line("✓ Locale configured")
+                
+                # Generate locales in chroot
+                result = await asyncio.to_thread(subprocess.run,
+                    ['chroot', '/mnt', 'xbps-reconfigure', '-f', 'glibc-locales'],
+                    capture_output=True, text=True)
+                if result.returncode == 0:
+                    log.write_line("✓ Locales generated")
+                
+                # Configure timezone
+                await asyncio.to_thread(subprocess.run,
+                    ['chroot', '/mnt', 'ln', '-sf', '/usr/share/zoneinfo/UTC', '/etc/localtime'],
+                    capture_output=True, text=True)
+                log.write_line("✓ Timezone set to UTC")
+                
+                # Create user account
+                username = "voiduser"  # Default, should get from UserScreen
+                log.write_line(f"Creating user account: {username}")
+                
+                # Add user
+                result = await asyncio.to_thread(subprocess.run,
+                    ['chroot', '/mnt', 'useradd', '-m', '-G', 'wheel,audio,video,cdrom,optical,kvm,xbuilder', username],
+                    capture_output=True, text=True)
+                if result.returncode == 0:
+                    log.write_line(f"✓ User {username} created")
+                
+                # Set user password (should get from UserScreen)
+                result = await asyncio.to_thread(subprocess.run,
+                    ['chroot', '/mnt', 'bash', '-c', f'echo "{username}:voidlinux" | chpasswd'],
+                    capture_output=True, text=True)
+                if result.returncode == 0:
+                    log.write_line(f"✓ Password set for {username}")
+                
+                # Set root password
+                result = await asyncio.to_thread(subprocess.run,
+                    ['chroot', '/mnt', 'bash', '-c', 'echo "root:voidlinux" | chpasswd'],
+                    capture_output=True, text=True)
+                if result.returncode == 0:
+                    log.write_line("✓ Root password set")
+                
+                # Configure sudo
+                sudo_config = f"%wheel ALL=(ALL) ALL\n{username} ALL=(ALL) NOPASSWD: ALL\n"
+                with open('/mnt/etc/sudoers.d/99_wheel', 'w') as f:
+                    f.write(sudo_config)
+                await asyncio.to_thread(subprocess.run, ['chmod', '440', '/mnt/etc/sudoers.d/99_wheel'])
+                log.write_line("✓ Sudo configured")
+                
+                # Enable essential services
+                log.write_line("Enabling essential services...")
+                services = ['NetworkManager', 'chronyd', 'dhcpcd']
+                for service in services:
+                    result = await asyncio.to_thread(subprocess.run,
+                        ['chroot', '/mnt', 'ln', '-s', f'/etc/sv/{service}', '/var/service/'],
+                        capture_output=True, text=True)
+                    if result.returncode == 0:
+                        log.write_line(f"✓ {service} enabled")
+                
+                # Configure initramfs for encryption if needed
+                if hasattr(app_typed, 'encryption_info') and app_typed.encryption_info:
+                    log.write_line("Configuring initramfs for encryption...")
+                    
+                    # Ensure cryptsetup is installed for initramfs
+                    await asyncio.to_thread(install_packages, "/mnt", "cryptsetup")
+                    
+                    # Update dracut configuration for encryption
+                    dracut_config = """# Dracut configuration for LUKS encryption
+add_dracutmodules+=" crypt dm "
+install_items+=" /etc/crypttab "
+"""
+                    with open('/mnt/etc/dracut.conf.d/10-crypt.conf', 'w') as f:
+                        f.write(dracut_config)
+                    
+                    # Regenerate initramfs
+                    log.write_line("Regenerating initramfs...")
+                    result = await asyncio.to_thread(subprocess.run,
+                        ['chroot', '/mnt', 'dracut', '--force', '--hostonly'],
+                        capture_output=True, text=True)
+                    if result.returncode == 0:
+                        log.write_line("✓ Initramfs regenerated for encryption")
+                    else:
+                        log.write_line("[yellow]Warning: Initramfs regeneration had issues[/yellow]")
+                
+                log.write_line("✓ System configuration complete")
                 
             except Exception as e:
                 log.write_line(f"[red]Base system error: {e}[/red]")
@@ -977,58 +1258,70 @@ read
                     current_task.update(f"Installing {desktop_env.upper()}")
                     progress_text.update(f"Installing {desktop_env} desktop environment...")
                     
-                    # Get profile and packages
+                    # Get profile packages from the profile modules
                     selected_profile = config.get('profile')
-                    base_packages = config.get('base_packages', [])
-                    additional_packages = config.get('additional_packages', [])
-                    
-                    if selected_profile:
+                    if selected_profile and 'packages' in selected_profile:
+                        profile_packages = selected_profile['packages']
                         log.write_line(f"Installing {selected_profile.get('description', desktop_env)} profile...")
-                    
-                    # Install base packages from profile
-                    if base_packages:
-                        log.write_line(f"Installing {len(base_packages)} base packages...")
+                        log.write_line(f"Profile packages: {', '.join(profile_packages)}")
+                        
                         try:
-                            for package in base_packages[:10]:  # Limit for demo
-                                log.write_line(f"Installing {package}...")
-                                result = await asyncio.to_thread(subprocess.run,
-                                    ['xbps-install', '-S', '-y', '-r', '/mnt', package],
-                                    capture_output=True, text=True)
-                                if result.returncode == 0:
-                                    log.write_line(f"✓ {package} installed")
-                            log.write_line("✓ Base packages installed")
+                            # Use the modular install_packages function
+                            await asyncio.to_thread(install_packages, "/mnt", *profile_packages)
+                            log.write_line("✓ Desktop environment packages installed")
                         except Exception as e:
-                            log.write_line(f"[yellow]Base packages warning: {e}[/yellow]")
+                            log.write_line(f"[red]Desktop environment error: {e}[/red]")
                     
-                    # Install additional packages
+                    # Install additional packages selected by user
+                    additional_packages = config.get('additional_packages', [])
                     if additional_packages:
-                        log.write_line(f"Installing additional packages...")
+                        log.write_line(f"Installing additional packages: {', '.join(additional_packages)}")
                         try:
-                            for package in additional_packages[:5]:  # Limit for demo
-                                log.write_line(f"Installing {package}...")
-                                result = await asyncio.to_thread(subprocess.run,
-                                    ['xbps-install', '-S', '-y', '-r', '/mnt', package],
-                                    capture_output=True, text=True)
-                                if result.returncode == 0:
-                                    log.write_line(f"✓ {package} installed")
+                            await asyncio.to_thread(install_packages, "/mnt", *additional_packages)
                             log.write_line("✓ Additional packages installed")
                         except Exception as e:
                             log.write_line(f"[yellow]Additional packages warning: {e}[/yellow]")
+                    
+                    # Enable desktop manager service if applicable
+                    if desktop_env in ['xfce4', 'mate', 'cinnamon']:
+                        # These use lightdm
+                        log.write_line("Enabling lightdm display manager...")
+                        result = await asyncio.to_thread(subprocess.run,
+                            ['chroot', '/mnt', 'ln', '-s', '/etc/sv/lightdm', '/var/service/'],
+                            capture_output=True, text=True)
+                        if result.returncode == 0:
+                            log.write_line("✓ lightdm enabled")
+                    elif desktop_env == 'gnome':
+                        # GNOME uses gdm
+                        log.write_line("Enabling gdm display manager...")
+                        result = await asyncio.to_thread(subprocess.run,
+                            ['chroot', '/mnt', 'ln', '-s', '/etc/sv/gdm', '/var/service/'],
+                            capture_output=True, text=True)
+                        if result.returncode == 0:
+                            log.write_line("✓ gdm enabled")
+                    elif desktop_env == 'kde':
+                        # KDE uses sddm
+                        log.write_line("Enabling sddm display manager...")
+                        result = await asyncio.to_thread(subprocess.run,
+                            ['chroot', '/mnt', 'ln', '-s', '/etc/sv/sddm', '/var/service/'],
+                            capture_output=True, text=True)
+                        if result.returncode == 0:
+                            log.write_line("✓ sddm enabled")
                 
-                # Configure graphics drivers
+                # Configure graphics drivers using additional packages
                 graphics_driver = config.get('graphics_driver', 'auto')
                 if graphics_driver != 'auto':
                     log.write_line(f"Configuring {graphics_driver} graphics drivers...")
+                    # Graphics driver packages are already included in additional_packages
                     
-                # Configure audio
+                # Configure audio system
                 audio_system = config.get('audio_system', 'none')
-                if audio_system == 'pulseaudio':
-                    log.write_line("Configuring PulseAudio...")
-                elif audio_system == 'pipewire':
-                    log.write_line("Configuring PipeWire...")
+                if audio_system != 'none':
+                    log.write_line(f"Configuring {audio_system} audio system...")
+                    # Audio packages are already included in additional_packages
             else:
                 current_task.update("Minimal Installation")
-                log.write_line("Configuring minimal system...")
+                log.write_line("Using minimal system configuration...")
                 
             progress.update(progress=80)
             
@@ -1038,26 +1331,15 @@ read
             log.write_line("Installing GRUB bootloader...")
             
             try:
-                import subprocess
-                # Install GRUB to disk
+                from lib.boot.grub import install_grub_chroot
+                
+                # Get disk from partition config
                 disk = app_typed.partition_config.get('disk', '/dev/sda')
-                log.write_line(f"Installing GRUB to {disk}...")
+                log.write_line(f"Installing GRUB bootloader for {disk}...")
                 
-                result = await asyncio.to_thread(subprocess.run,
-                    ['grub-install', '--target=x86_64-efi', '--efi-directory=/mnt/boot/efi', '--bootloader-id=void'],
-                    capture_output=True, text=True)
-                if result.returncode == 0:
-                    log.write_line("✓ GRUB installed")
-                else:
-                    log.write_line("[yellow]GRUB installation warning[/yellow]")
-                
-                # Generate GRUB configuration
-                log.write_line("Generating GRUB configuration...")
-                result = await asyncio.to_thread(subprocess.run,
-                    ['chroot', '/mnt', 'grub-mkconfig', '-o', '/boot/grub/grub.cfg'],
-                    capture_output=True, text=True)
-                if result.returncode == 0:
-                    log.write_line("✓ GRUB configured")
+                # Use the modular GRUB installation function
+                await asyncio.to_thread(install_grub_chroot, "/mnt", disk)
+                log.write_line("✓ GRUB bootloader installed and configured")
                 
             except Exception as e:
                 log.write_line(f"[red]Bootloader error: {e}[/red]")
@@ -1119,6 +1401,7 @@ read
 class VoidInstallApp(App):
     partition_config: dict
     graphics_config: dict
+    encryption_info: dict
 
     CSS = """
     /* Dark + Light Blue color scheme */
@@ -1291,6 +1574,7 @@ class VoidInstallApp(App):
         super().__init__()
         self.partition_config = {}
         self.graphics_config = {}
+        self.encryption_info = {}
     
     def on_mount(self) -> None:
         self.push_screen(WelcomeScreen())
@@ -1326,9 +1610,23 @@ def launch_tui():
     if 'LC_ALL' not in os.environ:
         os.environ['LC_ALL'] = 'C.UTF-8'
     
-    # Force color support for better compatibility
-    os.environ['FORCE_COLOR'] = '1'
-    os.environ['COLORTERM'] = 'truecolor'
+    # Detect terminal capabilities and set appropriate color support
+    term = os.environ.get('TERM', '')
+    if 'truecolor' in term or '24bit' in term or term.startswith('xterm-kitty'):
+        # Full truecolor support
+        os.environ['COLORTERM'] = 'truecolor'
+        os.environ['FORCE_COLOR'] = '1'
+        print("✓ Truecolor support detected")
+    elif '256color' in term or term.startswith('xterm-256'):
+        # 256 color support
+        os.environ['COLORTERM'] = '256color'
+        os.environ['FORCE_COLOR'] = '1'
+        print("✓ 256-color support detected")
+    else:
+        # Basic color support for VMs and older terminals
+        os.environ['COLORTERM'] = '8'
+        os.environ['FORCE_COLOR'] = '1'
+        print("✓ Basic color mode for VM compatibility")
     
     try:
         print("Starting VoidInstall TUI...")
