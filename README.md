@@ -7,7 +7,7 @@ A user-friendly Text User Interface (TUI) installer for Void Linux, inspired by 
 
 ## Features
 
-- **Interactive TUI** - Easy-to-use interface built with npyscreen
+- **Interactive TUI** - Easy-to-use interface built with textual + rich
 - **Full Disk Encryption** - LUKS encryption support (no LVM)
 - **Desktop Environments** - XFCE, GNOME, KDE, MATE, Cinnamon
 - **Sound Systems** - PipeWire or PulseAudio
