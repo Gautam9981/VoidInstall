@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 VoidInstall TUI - Textual+Rich main entry point
 """
@@ -977,9 +977,18 @@ read
             log.write_line("Installing base system...")
             
             try:
-                from lib.packages.xbps import install_packages
                 from lib.boot.grub import detect_boot_mode
-                import subprocess                # Determine required bootloader packages based on boot mode
+                import subprocess
+                import os
+                
+                # Check if we're running as root
+                if os.geteuid() != 0:
+                    log.write_line("[red]ERROR: Installer must be run as root![/red]")
+                    raise Exception("Installer requires root privileges")
+                
+                log.write_line("✓ Running as root - proceeding with installation")
+                
+                # Determine required bootloader packages based on boot mode
                 is_uefi = detect_boot_mode()
                 log.write_line(f"Detected boot mode: {'UEFI' if is_uefi else 'BIOS'}")
                 
@@ -997,12 +1006,36 @@ read
                 # Add essential system packages
                 essential_packages = [
                     'NetworkManager', 'dhcpcd', 'wpa_supplicant',
-                    'nano', 'vim', 'bash-completion', 'sudo'
+                    'nano', 'vim', 'bash-completion', 'sudo', 'chrony'
                 ]
                 base_packages.extend(essential_packages)
                 
                 log.write_line(f"Installing {len(base_packages)} base packages...")
-                await asyncio.to_thread(install_packages, "/mnt", *base_packages)
+                log.write_line(f"Package list: {', '.join(base_packages)}")
+                
+                # Install packages directly with subprocess for better control and logging
+                repo_url = "https://repo-default.voidlinux.org/current"
+                install_cmd = ['xbps-install', '-S', '-y', '-R', repo_url, '-r', '/mnt'] + base_packages
+                
+                log.write_line(f"Executing: {' '.join(install_cmd)}")
+                
+                # Run the installation with detailed output
+                result = await asyncio.to_thread(subprocess.run,
+                    install_cmd,
+                    capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    log.write_line("✓ Base system packages installed successfully")
+                    if result.stdout:
+                        log.write_line(f"Install output: {result.stdout[:500]}...")  # Show first 500 chars
+                else:
+                    log.write_line(f"[red]Package installation failed with return code {result.returncode}[/red]")
+                    if result.stderr:
+                        log.write_line(f"[red]Error output: {result.stderr}[/red]")
+                    if result.stdout:
+                        log.write_line(f"Standard output: {result.stdout}")
+                    raise Exception(f"Package installation failed: {result.stderr}")
+                
                 log.write_line("✓ Base system installed")
                 
                 # Configure the installed system
@@ -1277,7 +1310,18 @@ en_US ISO-8859-1
                     log.write_line("Configuring initramfs for encryption...")
                     
                     # Ensure cryptsetup is installed for initramfs
-                    await asyncio.to_thread(install_packages, "/mnt", "cryptsetup")
+                    log.write_line("Installing cryptsetup for encryption support...")
+                    repo_url = "https://repo-default.voidlinux.org/current"
+                    install_cmd = ['xbps-install', '-S', '-y', '-R', repo_url, '-r', '/mnt', 'cryptsetup']
+                    
+                    result = await asyncio.to_thread(subprocess.run,
+                        install_cmd,
+                        capture_output=True, text=True)
+                    
+                    if result.returncode == 0:
+                        log.write_line("✓ cryptsetup installed")
+                    else:
+                        log.write_line(f"[yellow]Warning: cryptsetup installation issue: {result.stderr}[/yellow]")
                     
                     # Update dracut configuration for encryption
                     dracut_config = """# Dracut configuration for LUKS encryption
@@ -1322,9 +1366,24 @@ install_items+=" /etc/crypttab "
                         log.write_line(f"Profile packages: {', '.join(profile_packages)}")
                         
                         try:
-                            # Use the modular install_packages function
-                            await asyncio.to_thread(install_packages, "/mnt", *profile_packages)
-                            log.write_line("✓ Desktop environment packages installed")
+                            # Install desktop packages directly with subprocess for better control
+                            repo_url = "https://repo-default.voidlinux.org/current"
+                            install_cmd = ['xbps-install', '-S', '-y', '-R', repo_url, '-r', '/mnt'] + profile_packages
+                            
+                            log.write_line(f"Executing desktop install: {' '.join(install_cmd[:10])}...")  # Show first part
+                            
+                            result = await asyncio.to_thread(subprocess.run,
+                                install_cmd,
+                                capture_output=True, text=True)
+                            
+                            if result.returncode == 0:
+                                log.write_line("✓ Desktop environment packages installed successfully")
+                                if result.stdout:
+                                    log.write_line(f"Desktop install output: {result.stdout[:300]}...")
+                            else:
+                                log.write_line(f"[red]Desktop installation failed with return code {result.returncode}[/red]")
+                                if result.stderr:
+                                    log.write_line(f"[red]Desktop error: {result.stderr}[/red]")
                         except Exception as e:
                             log.write_line(f"[red]Desktop environment error: {e}[/red]")
                     
@@ -1333,8 +1392,23 @@ install_items+=" /etc/crypttab "
                     if additional_packages:
                         log.write_line(f"Installing additional packages: {', '.join(additional_packages)}")
                         try:
-                            await asyncio.to_thread(install_packages, "/mnt", *additional_packages)
-                            log.write_line("✓ Additional packages installed")
+                            repo_url = "https://repo-default.voidlinux.org/current"
+                            install_cmd = ['xbps-install', '-S', '-y', '-R', repo_url, '-r', '/mnt'] + additional_packages
+                            
+                            log.write_line(f"Executing additional packages install...")
+                            
+                            result = await asyncio.to_thread(subprocess.run,
+                                install_cmd,
+                                capture_output=True, text=True)
+                            
+                            if result.returncode == 0:
+                                log.write_line("✓ Additional packages installed successfully")
+                                if result.stdout:
+                                    log.write_line(f"Additional packages output: {result.stdout[:300]}...")
+                            else:
+                                log.write_line(f"[yellow]Additional packages warning: return code {result.returncode}[/yellow]")
+                                if result.stderr:
+                                    log.write_line(f"[yellow]Additional packages stderr: {result.stderr}[/yellow]")
                         except Exception as e:
                             log.write_line(f"[yellow]Additional packages warning: {e}[/yellow]")
                     
