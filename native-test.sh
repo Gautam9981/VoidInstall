@@ -2,6 +2,7 @@
 
 # VoidInstall Native Test Script
 # Runs the VoidInstall TUI directly on Void Linux
+# Merges functionality from Dockerfile and docker-test.sh for native environment
 
 set -euo pipefail
 
@@ -123,13 +124,6 @@ export PYTHONPATH="$VOIDINSTALL_DIR:$PYTHONPATH"
 # Change to the voidinstall directory
 cd "$VOIDINSTALL_DIR"
 
-print_info "Available disks:"
-lsblk -d -o NAME,SIZE,TYPE,MODEL | grep -E "(disk|loop)"
-
-echo
-print_info "Test disk available at: $LOOP_DEVICE"
-print_warning "Press Ctrl+C to exit"
-echo
 
 # Launch the TUI (with fallback options like docker-test.sh)
 print_success "Starting VoidInstall TUI..."
