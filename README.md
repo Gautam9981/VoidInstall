@@ -151,8 +151,8 @@ python3 -c "from lib.disk.utils import list_partitions; list_partitions('/dev/sd
 
 ```bash
 # Install missing packages
-sudo xbps-install -S python3 python3-pip
-pip3 install npyscreen
+sudo xbps-install -S python3
+sudo xbps-install -S python3-textual
 ```
 
 ## Warning
