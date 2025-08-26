@@ -1208,13 +1208,69 @@ en_US ISO-8859-1
                 
                 # Enable essential services
                 log.write_line("Enabling essential services...")
-                services = ['NetworkManager', 'chronyd', 'dhcpcd']
-                for service in services:
+                essential_services = ['NetworkManager', 'chronyd', 'dhcpcd']
+                for service in essential_services:
                     result = await asyncio.to_thread(subprocess.run,
                         ['chroot', '/mnt', 'ln', '-s', f'/etc/sv/{service}', '/var/service/'],
                         capture_output=True, text=True)
                     if result.returncode == 0:
                         log.write_line(f"✓ {service} enabled")
+                
+                # Enable audio services based on configuration
+                if hasattr(app_typed, 'graphics_config') and app_typed.graphics_config:
+                    audio_system = app_typed.graphics_config.get('audio_system', 'none')
+                    if audio_system != 'none':
+                        log.write_line(f"Enabling {audio_system} audio services...")
+                        
+                        if audio_system == 'pulseaudio':
+                            # Enable PulseAudio services
+                            audio_services = ['pulseaudio']
+                            for service in audio_services:
+                                result = await asyncio.to_thread(subprocess.run,
+                                    ['chroot', '/mnt', 'ln', '-s', f'/etc/sv/{service}', '/var/service/'],
+                                    capture_output=True, text=True)
+                                if result.returncode == 0:
+                                    log.write_line(f"✓ {service} enabled")
+                                else:
+                                    log.write_line(f"[yellow]Warning: Could not enable {service}[/yellow]")
+                        
+                        elif audio_system == 'pipewire':
+                            # Enable PipeWire services
+                            audio_services = ['pipewire', 'pipewire-pulse', 'wireplumber']
+                            for service in audio_services:
+                                result = await asyncio.to_thread(subprocess.run,
+                                    ['chroot', '/mnt', 'ln', '-s', f'/etc/sv/{service}', '/var/service/'],
+                                    capture_output=True, text=True)
+                                if result.returncode == 0:
+                                    log.write_line(f"✓ {service} enabled")
+                                else:
+                                    log.write_line(f"[yellow]Warning: Could not enable {service}[/yellow]")
+                        
+                        elif audio_system == 'alsa':
+                            # Enable ALSA services
+                            audio_services = ['alsa']
+                            for service in audio_services:
+                                result = await asyncio.to_thread(subprocess.run,
+                                    ['chroot', '/mnt', 'ln', '-s', f'/etc/sv/{service}', '/var/service/'],
+                                    capture_output=True, text=True)
+                                if result.returncode == 0:
+                                    log.write_line(f"✓ {service} enabled")
+                                else:
+                                    log.write_line(f"[yellow]Warning: Could not enable {service}[/yellow]")
+                
+                # Enable printing services if selected
+                if hasattr(app_typed, 'graphics_config') and app_typed.graphics_config:
+                    if app_typed.graphics_config.get('cups', False):
+                        log.write_line("Enabling CUPS printing services...")
+                        cups_services = ['cupsd']
+                        for service in cups_services:
+                            result = await asyncio.to_thread(subprocess.run,
+                                ['chroot', '/mnt', 'ln', '-s', f'/etc/sv/{service}', '/var/service/'],
+                                capture_output=True, text=True)
+                            if result.returncode == 0:
+                                log.write_line(f"✓ {service} enabled")
+                            else:
+                                log.write_line(f"[yellow]Warning: Could not enable {service}[/yellow]")
                 
                 # Configure initramfs for encryption if needed
                 if hasattr(app_typed, 'encryption_info') and app_typed.encryption_info:
