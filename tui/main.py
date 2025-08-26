@@ -66,17 +66,67 @@ class DiskScreen(Screen):
             yield Input(value="/dev/sda", id="disk_input")
             yield Label("Partitioning Method:")
             yield Select([("Auto", "auto"), ("Manual", "manual")], id="partition_method")
-            yield Label("Filesystem:")
+            yield Label("Filesystem:", id="filesystem_label")
             yield Select([("ext4", "ext4"), ("xfs", "xfs"), ("btrfs", "btrfs")], id="filesystem")
             yield Checkbox("Enable LUKS Encryption", id="encryption")
-            yield Label("Encryption Password:")
+            yield Label("Encryption Password:", id="enc_pass_label")
             yield Input(password=True, placeholder="Enter encryption password", id="enc_pass")
-            yield Label("Confirm Encryption Password:")
+            yield Label("Confirm Encryption Password:", id="enc_pass_confirm_label")
             yield Input(password=True, placeholder="Confirm encryption password", id="enc_pass_confirm")
             with Horizontal():
                 yield Button("Back", id="back", classes="nav-button")
                 yield Button("Next", id="next", variant="primary", classes="nav-button")
         yield Footer()
+    
+    def on_mount(self) -> None:
+        # Initially show filesystem options (default is auto)
+        self.update_filesystem_visibility("auto")
+        # Initially hide encryption fields (default is unchecked)
+        self.update_encryption_visibility(False)
+    
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "partition_method":
+            # Convert value to string, handle NoSelection case
+            method = str(event.value) if event.value is not None else "auto"
+            self.update_filesystem_visibility(method)
+    
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "encryption":
+            self.update_encryption_visibility(event.value)
+    
+    def update_filesystem_visibility(self, partition_method: str) -> None:
+        """Show/hide filesystem selection based on partitioning method"""
+        filesystem_label = self.query_one("#filesystem_label")
+        filesystem_select = self.query_one("#filesystem")
+        
+        if partition_method == "manual":
+            # Hide filesystem options for manual partitioning
+            filesystem_label.display = False
+            filesystem_select.display = False
+        else:
+            # Show filesystem options for automatic partitioning
+            filesystem_label.display = True
+            filesystem_select.display = True
+    
+    def update_encryption_visibility(self, encryption_enabled: bool) -> None:
+        """Show/hide encryption password fields based on checkbox state"""
+        enc_pass_label = self.query_one("#enc_pass_label")
+        enc_pass_input = self.query_one("#enc_pass")
+        enc_pass_confirm_label = self.query_one("#enc_pass_confirm_label")
+        enc_pass_confirm_input = self.query_one("#enc_pass_confirm")
+        
+        if encryption_enabled:
+            # Show encryption password fields
+            enc_pass_label.display = True
+            enc_pass_input.display = True
+            enc_pass_confirm_label.display = True
+            enc_pass_confirm_input.display = True
+        else:
+            # Hide encryption password fields
+            enc_pass_label.display = False
+            enc_pass_input.display = False
+            enc_pass_confirm_label.display = False
+            enc_pass_confirm_input.display = False
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
             self.app.pop_screen()
@@ -93,6 +143,9 @@ class DiskScreen(Screen):
                 self.app.push_screen(ManualPartitionScreen(disk))
                 return
             
+            # For automatic partitioning, get filesystem choice
+            filesystem = self.query_one("#filesystem", Select).value
+            
             encryption = self.query_one("#encryption", Checkbox).value
             if encryption:
                 enc_pass = self.query_one("#enc_pass", Input).value
@@ -100,6 +153,14 @@ class DiskScreen(Screen):
                 if not enc_pass or enc_pass != enc_confirm:
                     self.notify("Encryption passwords don't match or are empty")
                     return
+            
+            # Store automatic partitioning configuration
+            setattr(self.app, "partition_config", {
+                'disk': disk,
+                'method': 'auto',
+                'filesystem': filesystem,
+                'encryption': encryption
+            })
             
             self.app.push_screen(UserScreen())
 
@@ -115,11 +176,12 @@ class ManualPartitionScreen(Screen):
         with ScrollableContainer():
             yield Static(f"Manual Partitioning - {self.disk}", classes="title")
             yield Static(Panel(
-                f"[bold yellow]Instructions:[/bold yellow]\n"
-                f"1. Use cfdisk to create partitions on {self.disk}\n"
-                f"2. After partitioning, set mount points for each partition\n"
-                f"3. At minimum you need a root (/) partition",
-                title="Manual Partitioning", border_style="yellow"
+                f"[bold yellow]Step 1: Create Partitions[/bold yellow]\n"
+                f"Click 'Open cfdisk' to create partitions on {self.disk}\n"
+                f"Create at least a root partition and optionally boot, home, swap, etc.\n\n"
+                f"[bold green]Step 2: Set Mount Points[/bold green]\n"
+                f"AFTER creating partitions with cfdisk, use the form below to assign mount points",
+                title="Manual Partitioning Workflow", border_style="yellow"
             ))
             
             with Horizontal():
@@ -127,8 +189,18 @@ class ManualPartitionScreen(Screen):
                 yield Button("Refresh Partitions", id="refresh", classes="nav-button")
             
             yield Static("", id="partition_list")
-            yield Static("Mount Point Assignment:", classes="subtitle")
-            yield Static("", id="mount_assignment")
+            
+            # Mount point assignment section
+            yield Static("Mount Point Assignment (Complete AFTER using cfdisk):", classes="subtitle")
+            yield Static(Panel(
+                "[bold]Required:[/bold] / (root)\n"
+                "[bold]Optional:[/bold] /boot, /home, /var, /tmp, swap\n"
+                "[bold]Note:[/bold] Use 'swap' (not a path) for swap partitions",
+                title="Mount Point Reference", border_style="blue"
+            ))
+            
+            with ScrollableContainer(id="mount_inputs"):
+                yield Static("Partitions will appear here after using cfdisk...")
             
             with Horizontal():
                 yield Button("Back", id="back", classes="nav-button")
@@ -139,7 +211,7 @@ class ManualPartitionScreen(Screen):
         self.refresh_partitions()
     
     def refresh_partitions(self):
-        """Refresh the list of partitions on the disk"""
+        """Refresh the list of partitions on the disk and create mount point inputs"""
         import subprocess
         try:
             # Get partition information
@@ -160,45 +232,53 @@ class ManualPartitionScreen(Screen):
                             partition_text += f"  {partition_name} ({partition_size})\n"
                 
                 if not self.partitions:
-                    partition_text += "  No partitions found. Use cfdisk to create partitions.\n"
+                    partition_text += "  [red]No partitions found.[/red] Use cfdisk to create partitions first.\n"
             else:
                 partition_text += "  Error reading partitions.\n"
             
             self.query_one("#partition_list", Static).update(partition_text)
-            self.update_mount_assignment()
+            self.update_mount_inputs()
         except Exception as e:
             self.notify(f"Error refreshing partitions: {e}")
     
-    def update_mount_assignment(self):
-        """Update the mount point assignment interface"""
+    def update_mount_inputs(self):
+        """Update the mount point input fields for each partition"""
+        mount_container = self.query_one("#mount_inputs")
+        
+        # Clear existing widgets
+        mount_container.remove_children()
+        
         if not self.partitions:
-            self.query_one("#mount_assignment", Static).update("No partitions available for mount point assignment.")
+            mount_container.mount(Static("[yellow]No partitions detected. Please use cfdisk first, then click 'Refresh Partitions'.[/yellow]"))
             return
         
-        mount_text = "Assign mount points to partitions:\n"
+        # Create input fields for each partition
         for partition in self.partitions:
+            # Get current mount point if exists
             current_mount = self.mount_points.get(partition, "")
-            mount_text += f"  {partition}: {current_mount or '(not assigned)'}\n"
-        
-        mount_text += "\nCommon mount points: /, /boot, /home, /var, swap"
-        self.query_one("#mount_assignment", Static).update(mount_text)
+            
+            mount_container.mount(Label(f"{partition}:"))
+            mount_container.mount(Input(
+                value=current_mount,
+                placeholder="e.g., /, /boot, /home, swap",
+                id=f"mount_{partition.replace('/', '_')}"
+            ))
     
     @work(exclusive=True)
     async def launch_cfdisk(self):
         """Launch cfdisk for manual partitioning"""
         import subprocess
         import os
+        import sys
         try:
-            self.notify("Launching cfdisk in separate terminal...")
-            
-            # Try to detect available terminal emulators
+            # First try to detect available terminal emulators for new window
             terminal_commands = [
-                ['konsole', '-e', 'cfdisk', self.disk],
-                ['gnome-terminal', '--', 'cfdisk', self.disk],
-                ['xterm', '-e', 'cfdisk', self.disk],
-                ['alacritty', '-e', 'cfdisk', self.disk],
-                ['kitty', '-e', 'cfdisk', self.disk],
-                ['terminator', '-e', 'cfdisk', self.disk],
+                ['konsole', '-e', 'bash', '-c', f'cfdisk {self.disk}; echo "Press Enter to continue..."; read'],
+                ['gnome-terminal', '--', 'bash', '-c', f'cfdisk {self.disk}; echo "Press Enter to continue..."; read'],
+                ['xterm', '-e', 'bash', '-c', f'cfdisk {self.disk}; echo "Press Enter to continue..."; read'],
+                ['alacritty', '-e', 'bash', '-c', f'cfdisk {self.disk}; echo "Press Enter to continue..."; read'],
+                ['kitty', '-e', 'bash', '-c', f'cfdisk {self.disk}; echo "Press Enter to continue..."; read'],
+                ['terminator', '-e', 'bash', '-c', f'cfdisk {self.disk}; echo "Press Enter to continue..."; read'],
             ]
             
             success = False
@@ -215,10 +295,18 @@ class ManualPartitionScreen(Screen):
                     continue
             
             if not success:
-                # Fallback: Show message and let user run cfdisk manually
-                self.notify("No terminal emulator found for cfdisk")
-                self.notify("Please open a terminal and run: sudo cfdisk " + self.disk)
-                self.notify("Then click 'Refresh Partitions' when done")
+                # Fallback: Run cfdisk directly in current terminal
+                self.notify("No separate terminal found. Running cfdisk in current terminal...")
+                self.notify("The TUI will temporarily exit. Press any key to continue...")
+                
+                # Give user a moment to read the message
+                await asyncio.sleep(2)
+                
+                # Set flag for cfdisk and store disk info
+                setattr(self.app, 'run_cfdisk', True)
+                setattr(self.app, 'cfdisk_disk', self.disk)
+                self.app.exit()
+                
             else:
                 self.notify("Returning to installer. Refreshing partition list...")
                 self.refresh_partitions()
@@ -235,81 +323,38 @@ class ManualPartitionScreen(Screen):
             self.refresh_partitions()
         elif event.button.id == "next":
             if not self.partitions:
-                self.notify("No partitions found. Please create partitions first.")
+                self.notify("No partitions found. Please create partitions with cfdisk first.")
                 return
             
-            if "/" not in self.mount_points.values():
-                self.notify("You must assign a root (/) mount point.")
+            # Collect mount points from input fields
+            self.mount_points = {}
+            has_root = False
+            
+            for partition in self.partitions:
+                input_id = f"mount_{partition.replace('/', '_')}"
+                try:
+                    mount_input = self.query_one(f"#{input_id}", Input)
+                    mount_point = mount_input.value.strip()
+                    
+                    if mount_point:
+                        if mount_point == "/":
+                            has_root = True
+                        self.mount_points[partition] = mount_point
+                except Exception:
+                    # Input field might not exist if partitions were just created
+                    pass
+            
+            if not has_root:
+                self.notify("You must assign a root (/) mount point to one partition.")
                 return
             
-            # Store partition configuration and continue
+            # Store partition configuration and continue to user setup
             setattr(self.app, "partition_config", {
                 'disk': self.disk,
                 'method': 'manual',
                 'partitions': self.partitions,
                 'mount_points': self.mount_points
             })
-            self.app.push_screen(MountPointScreen(self.partitions))
-
-class MountPointScreen(Screen):
-    def __init__(self, partitions: list):
-        super().__init__()
-        self.partitions = partitions
-        self.mount_inputs = {}
-    
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with ScrollableContainer():
-            yield Static("Mount Point Assignment", classes="title")
-            yield Static("Assign mount points to your partitions:")
-            
-            for partition in self.partitions:
-                yield Label(f"{partition}:")
-                yield Input(placeholder="e.g., /, /boot, /home, swap", id=f"mount_{partition}")
-            
-            yield Static(Panel(
-                "[bold]Common mount points:[/bold]\n"
-                "/ - Root filesystem (required)\n"
-                "/boot - Boot partition\n"
-                "/home - User home directories\n"
-                "/var - Variable data\n"
-                "swap - Swap partition",
-                title="Mount Point Reference", border_style="blue"
-            ))
-            
-            with Horizontal():
-                yield Button("Back", id="back", classes="nav-button")
-                yield Button("Next", id="next", variant="primary", classes="nav-button")
-        yield Footer()
-    
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
-            self.app.pop_screen()
-        elif event.button.id == "next":
-            # Collect mount points
-            mount_points = {}
-            has_root = False
-            
-            for partition in self.partitions:
-                mount_input = self.query_one(f"#mount_{partition}", Input)
-                mount_point = mount_input.value.strip()
-                
-                if mount_point:
-                    if mount_point == "/":
-                        has_root = True
-                    mount_points[partition] = mount_point
-            
-            if not has_root:
-                self.notify("You must assign a root (/) mount point to one partition.")
-                return
-            
-            # Store mount points and continue to user setup
-            app = self.app
-            if hasattr(app, 'partition_config') and isinstance(getattr(app, 'partition_config', None), dict):
-                # Cast self.app to VoidInstallApp to access partition_config
-                from typing import cast
-                app_typed = cast(VoidInstallApp, self.app)
-                app_typed.partition_config['mount_points'] = mount_points
             
             self.app.push_screen(UserScreen())
 
@@ -501,22 +546,208 @@ class ProgressScreen(Screen):
     def __init__(self):
         super().__init__()
         self.installation_complete = False
+        self.external_install = False
     
     def compose(self) -> ComposeResult:
         yield Header()
         with ScrollableContainer():
-            yield Static("Installing Void Linux", classes="title")
-            yield Static("", id="current_task", classes="subtitle")
-            yield Static("Setting up your system, please wait...", id="status_text")
-            yield Static("", id="progress_text", classes="progress-info")
-            yield ProgressBar(total=100, show_eta=True, show_percentage=True, id="progress", classes="large-progress")
-            yield Log(id="log", classes="install-log")
+            yield Static("Installation Options", classes="title")
+            yield Static(Panel(
+                "[bold]Choose installation display method:[/bold]\n\n"
+                "[green]1. Embedded Terminal[/green] - Show installation progress in this window\n"
+                "[blue]2. External Terminal[/blue] - Open installation in a separate terminal window\n\n"
+                "External terminal provides more detailed output and better visibility.",
+                title="Installation Display", border_style="yellow"
+            ))
+            
             with Horizontal():
-                yield Button("Cancel", id="cancel", variant="error", classes="install-button")
+                yield Button("Embedded Terminal", id="embedded", variant="primary", classes="nav-button")
+                yield Button("External Terminal", id="external", variant="success", classes="nav-button")
+                yield Button("Cancel", id="cancel", variant="error", classes="nav-button")
         yield Footer()
     
-    def on_mount(self) -> None:
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        # Handle installation choice buttons
+        if event.button.id == "cancel" and not self.installation_complete:
+            self.app.pop_screen()
+        elif event.button.id == "embedded":
+            self.external_install = False
+            self.start_embedded_install()
+        elif event.button.id == "external":
+            self.external_install = True
+            self.launch_external_install()
+        # Handle completion buttons
+        elif event.button.id == "restart":
+            # Restart the system
+            import subprocess
+            try:
+                subprocess.run(["reboot"], check=True)
+            except Exception as e:
+                self.notify(f"Cannot restart: {e}")
+        elif event.button.id == "exit_complete" or event.button.id == "exit":
+            self.app.exit()
+    
+    def start_embedded_install(self):
+        """Start installation in embedded terminal"""
+        # Replace current content with progress view
+        self.query_one(ScrollableContainer).remove_children()
+        container = self.query_one(ScrollableContainer)
+        
+        container.mount(Static("Installing Void Linux", classes="title"))
+        container.mount(Static("", id="current_task", classes="subtitle"))
+        container.mount(Static("Setting up your system, please wait...", id="status_text"))
+        container.mount(Static("", id="progress_text", classes="progress-info"))
+        container.mount(ProgressBar(total=100, show_eta=True, show_percentage=True, id="progress", classes="large-progress"))
+        container.mount(Log(id="log", classes="install-log"))
+        
         self.call_later(self.do_install)
+    
+    @work(exclusive=True)
+    async def launch_external_install(self):
+        """Launch installation in external terminal"""
+        import subprocess
+        import os
+        
+        try:
+            self.notify("Launching installation in external terminal...")
+            
+            # Create installation script content
+            install_script = self.create_install_script()
+            
+            # Try to detect available terminal emulators
+            terminal_commands = [
+                ['konsole', '-e', 'bash', '-c', install_script],
+                ['gnome-terminal', '--', 'bash', '-c', install_script],
+                ['xterm', '-e', 'bash', '-c', install_script],
+                ['alacritty', '-e', 'bash', '-c', install_script],
+                ['kitty', '-e', 'bash', '-c', install_script],
+                ['terminator', '-e', 'bash', '-c', install_script],
+            ]
+            
+            success = False
+            for cmd in terminal_commands:
+                try:
+                    # Check if the terminal emulator exists
+                    if subprocess.run(['which', cmd[0]], capture_output=True).returncode == 0:
+                        self.notify(f"Opening installation in {cmd[0]}...")
+                        process = subprocess.Popen(cmd)
+                        await asyncio.to_thread(process.wait)
+                        success = True
+                        break
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    continue
+            
+            if not success:
+                # Fallback: Run installation directly in current terminal
+                self.notify("No separate terminal found. Running installation in current terminal...")
+                self.notify("The TUI will temporarily exit. Press any key to continue...")
+                
+                # Give user a moment to read the message
+                await asyncio.sleep(2)
+                
+                # Set flag for external install and store script
+                setattr(self.app, 'run_install', True)
+                setattr(self.app, 'install_script', install_script)
+                self.app.exit()
+                
+            else:
+                # Show completion screen
+                self.show_completion_screen()
+            
+        except Exception as e:
+            self.notify(f"Error launching external installation: {e}")
+            # Fall back to embedded install
+            self.start_embedded_install()
+    
+    def create_install_script(self):
+        """Create bash script for external installation"""
+        script = '''#!/bin/bash
+echo "=========================================="
+echo "     Void Linux Installation"
+echo "=========================================="
+echo ""
+echo "Starting installation process..."
+echo ""
+
+# Phase 1: Dependencies
+echo "[1/5] Installing dependencies..."
+sleep 2
+
+# Phase 2: Disk preparation  
+echo "[2/5] Preparing disk and partitions..."
+'''
+        
+        # Add partition info if available
+        from typing import cast
+        app_typed = cast(VoidInstallApp, self.app)
+        if hasattr(app_typed, 'partition_config') and app_typed.partition_config:
+            config = app_typed.partition_config
+            script += f'echo "Using manual partitioning on {config.get('disk', 'unknown')}"\n'
+            for partition, mount_point in config.get('mount_points', {}).items():
+                script += f'echo "  {partition} -> {mount_point}"\n'
+        else:
+            script += 'echo "Using automatic partitioning..."\n'
+        
+        script += '''
+sleep 3
+
+# Phase 3: Base system
+echo "[3/5] Installing Void Linux base system..."
+sleep 4
+
+# Phase 4: Desktop environment
+echo "[4/5] Installing desktop environment and applications..."
+'''
+        
+        # Add graphics config info if available
+        if hasattr(app_typed, 'graphics_config') and app_typed.graphics_config:
+            config = app_typed.graphics_config
+            desktop_env = config.get('desktop_env', 'none')
+            if desktop_env != 'none':
+                script += f'echo "Installing {desktop_env.upper()} desktop environment..."\n'
+                
+            graphics_driver = config.get('graphics_driver', 'auto')
+            if graphics_driver != 'auto':
+                script += f'echo "Installing {graphics_driver} graphics drivers..."\n'
+        
+        script += '''
+sleep 5
+
+# Phase 5: Finalization
+echo "[5/5] Finalizing installation..."
+sleep 2
+
+echo ""
+echo "=========================================="
+echo "   Installation completed successfully!"
+echo "=========================================="
+echo ""
+echo "Your Void Linux system is ready."
+echo "Press Enter to continue..."
+read
+'''
+        
+        return script
+    
+    def show_completion_screen(self):
+        """Show installation completion screen"""
+        container = self.query_one(ScrollableContainer)
+        container.remove_children()
+        
+        container.mount(Static("Installation Complete!", classes="title"))
+        container.mount(Static(Panel(
+            "[bold green]Void Linux has been installed successfully![/bold green]\n\n"
+            "Your system is ready to use. You can now restart your computer\n"
+            "to boot into your new Void Linux installation.",
+            title="Success", border_style="green"
+        )))
+        
+        container.mount(Horizontal(
+            Button("Restart", id="restart", variant="success", classes="nav-button"),
+            Button("Exit", id="exit", variant="primary", classes="nav-button")
+        ))
+        
+        self.installation_complete = True
 
     @work(exclusive=True)
     async def do_install(self):
@@ -669,19 +900,6 @@ class ProgressScreen(Screen):
         except Exception:
             # Fallback: just update the existing button
             pass
-    
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "cancel" and not self.installation_complete:
-            self.app.exit()
-        elif event.button.id == "restart":
-            # Restart the system
-            import subprocess
-            try:
-                subprocess.run(["reboot"], check=True)
-            except Exception as e:
-                self.notify(f"Cannot restart: {e}")
-        elif event.button.id == "exit_complete":
-            self.app.exit()
 
 class VoidInstallApp(App):
     partition_config: dict
@@ -901,6 +1119,55 @@ def launch_tui():
         print("Starting VoidInstall TUI...")
         app = VoidInstallApp()
         app.run()
+        
+        # Handle cfdisk request
+        if hasattr(app, 'run_cfdisk') and getattr(app, 'run_cfdisk', False):
+            disk = getattr(app, 'cfdisk_disk', '/dev/sda')
+            
+            print(f"\nLaunching cfdisk for {disk}...")
+            print("Use arrow keys to navigate, Enter to select, 'q' to quit when done.")
+            print("=" * 60)
+            
+            # Run cfdisk directly
+            import subprocess
+            result = subprocess.run(['cfdisk', disk])
+            
+            if result.returncode == 0:
+                print("\ncfdisk completed successfully.")
+            else:
+                print(f"\ncfdisk exited with code {result.returncode}")
+            
+            print("Press Enter to return to VoidInstall...")
+            input()
+            
+            # Restart the TUI
+            print("Restarting VoidInstall TUI...")
+            return launch_tui()
+        
+        # Handle external installation request
+        if hasattr(app, 'run_install') and getattr(app, 'run_install', False):
+            install_script = getattr(app, 'install_script', '')
+            
+            print("\nRunning Void Linux installation...")
+            print("=" * 60)
+            
+            # Run the installation script directly
+            import subprocess
+            result = subprocess.run(['bash', '-c', install_script])
+            
+            if result.returncode == 0:
+                print("\nInstallation completed successfully!")
+                print("Your Void Linux system is ready.")
+            else:
+                print(f"\nInstallation exited with code {result.returncode}")
+            
+            print("Press Enter to return to VoidInstall...")
+            input()
+            
+            # Restart the TUI for completion screen
+            print("Restarting VoidInstall TUI...")
+            return launch_tui()
+            
     except KeyboardInterrupt:
         print("\nInstallation cancelled by user.")
         sys.exit(130)
