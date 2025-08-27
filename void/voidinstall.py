@@ -1,4 +1,25 @@
-#!/usr/bin/env python3
+def detect_hardware():
+    """Detect hardware and determine required packages."""
+    print(f"\n{Style.HEADER}{Style.BOLD}Detecting hardware...{Style.ENDC}")
+    
+    hardware_pkgs = []
+    
+    # Detect CPU and microcode
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            cpu_info = f.read().lower()
+        
+        if 'intel' in cpu_info:
+            print(f"{Style.OKCYAN}Intel CPU detected - adding Intel microcode{Style.ENDC}")
+            hardware_pkgs.append("void-repo-nonfree")  # Ensure nonfree repo is available
+            hardware_pkgs.append("intel-ucode")
+        elif 'amd' in cpu_info:
+            print(f"{Style.OKCYAN}AMD CPU detected - adding AMD microcode{Style.ENDC}")
+            hardware_pkgs.append("linux-firmware-amd")
+    except Exception as e:
+        print(f"{Style.WARNING}Could not detect CPU type: {e}{Style.ENDC}")
+    
+    # Always#!/usr/bin/env python3
 # --- Modular Installer Inspired by archinstall ---
 import subprocess
 import sys
@@ -341,34 +362,41 @@ def setup_bootstrap_repos():
         return False
 
 def install_base():
-    print(f"\n{Style.OKCYAN}Installing base system from mirrors...{Style.ENDC}")
+    print(f"\n{Style.OKCYAN}Installing base system...{Style.ENDC}")
+    
+    # Install base system first
+    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {BASE_PKGS}")
+
+def install_hardware_packages():
+    """Install hardware-specific packages after base system is installed."""
+    print(f"\n{Style.OKCYAN}Installing hardware-specific packages...{Style.ENDC}")
     
     # Detect hardware and get required packages
     hardware_pkgs = detect_hardware()
     
-    # Combine base packages with hardware-specific packages
-    all_pkgs = BASE_PKGS
     if hardware_pkgs:
-        all_pkgs += " " + " ".join(hardware_pkgs)
-        print(f"{Style.OKCYAN}Installing hardware-specific packages: {' '.join(hardware_pkgs)}{Style.ENDC}")
-    
-    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {all_pkgs}")
-    
-    # Enable hardware-specific services
-    if "NetworkManager" in hardware_pkgs:
-        run_cmd("ln -sf /etc/sv/NetworkManager /mnt/etc/runit/runsvdir/default/", check=False)
-        print(f"{Style.OKGREEN}NetworkManager service enabled.{Style.ENDC}")
-    
-    if "bluez" in hardware_pkgs:
-        run_cmd("ln -sf /etc/sv/bluetoothd /mnt/etc/runit/runsvdir/default/", check=False)
-        print(f"{Style.OKGREEN}Bluetooth service enabled.{Style.ENDC}")
-    
-    # Handle NVIDIA-specific setup
-    if "nvidia" in hardware_pkgs:
-        print(f"{Style.WARNING}NVIDIA drivers installed. You may need to blacklist nouveau manually.{Style.ENDC}")
-        mount_chroot_dirs()
-        run_cmd("echo 'blacklist nouveau' >> /mnt/etc/modprobe.d/nvidia.conf", check=False)
-        umount_chroot_dirs()
+        print(f"{Style.OKCYAN}Installing hardware packages: {' '.join(hardware_pkgs)}{Style.ENDC}")
+        
+        # Install hardware packages to target system
+        hardware_pkgs_str = " ".join(hardware_pkgs)
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {hardware_pkgs_str}")
+        
+        # Enable hardware-specific services
+        if "NetworkManager" in hardware_pkgs:
+            run_cmd("ln -sf /etc/sv/NetworkManager /mnt/etc/runit/runsvdir/default/", check=False)
+            print(f"{Style.OKGREEN}NetworkManager service enabled.{Style.ENDC}")
+        
+        if "bluez" in hardware_pkgs:
+            run_cmd("ln -sf /etc/sv/bluetoothd /mnt/etc/runit/runsvdir/default/", check=False)
+            print(f"{Style.OKGREEN}Bluetooth service enabled.{Style.ENDC}")
+        
+        # Handle NVIDIA-specific setup
+        if "nvidia" in hardware_pkgs:
+            print(f"{Style.WARNING}NVIDIA drivers installed. Blacklisting nouveau driver.{Style.ENDC}")
+            run_cmd("mkdir -p /mnt/etc/modprobe.d", check=False)
+            run_cmd("echo 'blacklist nouveau' > /mnt/etc/modprobe.d/nvidia.conf", check=False)
+    else:
+        print(f"{Style.OKGREEN}No additional hardware packages needed.{Style.ENDC}")
 
 def create_user():
     print(f"\n{Style.HEADER}{Style.BOLD}User creation:{Style.ENDC}")
@@ -480,6 +508,7 @@ def main():
     
     install_base()
     setup_mirrors()
+    install_hardware_packages()
     create_user()
     install_desktop_and_sound()
     install_bootloader(disk)
