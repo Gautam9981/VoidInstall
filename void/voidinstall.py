@@ -1,3 +1,15 @@
+def unmount_disk_partitions(disk):
+    # Unmount all mounted partitions of the disk
+    import re
+    print(f"Unmounting all partitions on {disk}...")
+    # List mounted partitions
+    result = subprocess.run("lsblk -ln -o NAME,MOUNTPOINT", shell=True, capture_output=True, text=True)
+    for line in result.stdout.strip().split('\n'):
+        parts = line.split()
+        if len(parts) == 2:
+            partname, mnt = parts
+            if mnt != "" and partname.startswith(disk.replace('/dev/', '')):
+                run_cmd(f"umount /dev/{partname}", check=False)
 def detect_uefi():
     # UEFI systems have /sys/firmware/efi
     try:
@@ -69,6 +81,7 @@ def auto_partition_disk(disk, uefi, use_swap, swap_size):
     if confirm != 'YES':
         print("Aborting.")
         sys.exit(0)
+    unmount_disk_partitions(disk)
     run_cmd(f"wipefs -a {disk}")
     run_cmd(f"sgdisk -Z {disk}")
     if uefi:
