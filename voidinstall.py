@@ -123,7 +123,31 @@ def unmount_disk_partitions(disk):
         print(f"{Style.WARNING}Force unmounting {mnt}...{Style.ENDC}")
         run_cmd(f"umount -lf {mnt}", check=False)
 
-    # 2. Unmount all partitions of the disk (in case any are still mounted elsewhere)
+    # 2. Turn off all swap on the disk
+    result = subprocess.run(f"lsblk -ln -o NAME,TYPE {disk}", shell=True, capture_output=True, text=True)
+    for line in result.stdout.strip().split('\n'):
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == 'part':
+            partdev = f"/dev/{parts[0]}"
+            # Check if swap
+            with open('/proc/swaps', 'r') as f:
+                if partdev in f.read():
+                    print(f"{Style.WARNING}Turning off swap on {partdev}...{Style.ENDC}")
+                    run_cmd(f"swapoff {partdev}", check=False)
+
+    # 3. Close all LUKS/dm-crypt mappings for the disk
+    result = subprocess.run("lsblk -ln -o NAME,TYPE", shell=True, capture_output=True, text=True)
+    for line in result.stdout.strip().split('\n'):
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == 'crypt':
+            cryptdev = parts[0]
+            print(f"{Style.WARNING}Closing LUKS mapping {cryptdev}...{Style.ENDC}")
+            run_cmd(f"cryptsetup close {cryptdev}", check=False)
+
+    # 4. Deactivate all LVM volume groups on the disk
+    run_cmd("vgchange -an", check=False)
+
+    # 5. Unmount all partitions of the disk (in case any are still mounted elsewhere)
     result = subprocess.run("lsblk -ln -o NAME,MOUNTPOINT", shell=True, capture_output=True, text=True)
     for line in result.stdout.strip().split('\n'):
         parts = line.split()
