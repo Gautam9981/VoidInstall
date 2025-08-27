@@ -534,24 +534,27 @@ def main():
     lvm = False
     luks_name = "cryptroot"
     root_for_crypt = None
+
+    # Prompt for LUKS and LVM before partitioning
+    luks_choice = input("Encrypt root partition with LUKS? [y/N]: ").strip().lower()
+    if luks_choice == "y":
+        luks = True
+        lvm_choice = input("Use LVM inside LUKS? [y/N]: ").strip().lower()
+        if lvm_choice == "y":
+            lvm = True
+
     if mode == "a":
         swap_choice = input("Create a swap partition? [y/N]: ").strip().lower()
         if swap_choice == "y":
             use_swap = True
             swap_size = input("Enter swap size (e.g., 2G, 512M): ").strip()
-        luks_choice = input("Encrypt root partition with LUKS? [y/N]: ").strip().lower()
-        if luks_choice == "y":
-            luks = True
-            lvm_choice = input("Use LVM inside LUKS? [y/N]: ").strip().lower()
-            if lvm_choice == "y":
-                lvm = True
         auto_partition_disk(disk, uefi, use_swap, swap_size)
-        root = format_auto_partitions(disk, uefi, use_swap)
+        # For auto, root partition is always disk2 (UEFI) or disk1 (BIOS)
+        root_part = f"{disk}2" if uefi else f"{disk}1"
         if luks:
-            # Setup LUKS on root partition
-            print(f"{Style.OKCYAN}Setting up LUKS encryption on {root}...{Style.ENDC}")
-            run_cmd(f"cryptsetup luksFormat {root}")
-            run_cmd(f"cryptsetup open {root} {luks_name}")
+            print(f"{Style.OKCYAN}Setting up LUKS encryption on {root_part}...{Style.ENDC}")
+            run_cmd(f"cryptsetup luksFormat {root_part}")
+            run_cmd(f"cryptsetup open {root_part} {luks_name}")
             luks_root = f"/dev/mapper/{luks_name}"
             if lvm:
                 print(f"{Style.OKCYAN}Setting up LVM inside LUKS...{Style.ENDC}")
@@ -578,13 +581,14 @@ def main():
                 efi = f"{disk}1"
                 run_cmd(f"mkdir -p /mnt/boot/efi")
                 run_cmd(f"mount {efi} /mnt/boot/efi")
+        else:
+            # No encryption, format and mount as usual
+            root = format_auto_partitions(disk, uefi, use_swap)
     else:
         manual_partition_disk(disk)
         format_and_mount_manual()
-        # If user wants encryption in manual mode, prompt for root device
-        luks_choice = input("Did you set up LUKS encryption for root? [y/N]: ").strip().lower()
-        if luks_choice == "y":
-            luks = True
+        if luks:
+            # Prompt for the mapped device after user sets up LUKS manually
             root_for_crypt = input("Enter the device path for the encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
 
     # Mount chroot dirs before any installation
