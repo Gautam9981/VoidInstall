@@ -1,3 +1,29 @@
+def mount_chroot_dirs():
+    print(f"{Style.OKBLUE}Mounting chroot directories...{Style.ENDC}")
+    run_cmd("mount --bind /dev /mnt/dev")
+    run_cmd("mount --bind /dev/pts /mnt/dev/pts")
+    run_cmd("mount -t proc none /mnt/proc")
+    run_cmd("mount -t sysfs none /mnt/sys")
+    run_cmd("mount -t tmpfs tmpfs /mnt/run")
+
+def umount_chroot_dirs():
+    print(f"{Style.OKBLUE}Unmounting chroot directories...{Style.ENDC}")
+    run_cmd("umount -l /mnt/dev/pts", check=False)
+    run_cmd("umount -l /mnt/dev", check=False)
+    run_cmd("umount -l /mnt/proc", check=False)
+    run_cmd("umount -l /mnt/sys", check=False)
+    run_cmd("umount -l /mnt/run", check=False)
+class Style:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
 def unmount_disk_partitions(disk):
     # Unmount all mounted partitions of the disk
     import re
@@ -21,6 +47,7 @@ def detect_uefi():
 def install_bootloader(disk):
     print("\nInstalling GRUB bootloader...")
     uefi = detect_uefi()
+    mount_chroot_dirs()
     if uefi:
         # UEFI: install grub-x86_64-efi and efibootmgr
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
@@ -33,8 +60,9 @@ def install_bootloader(disk):
         # Legacy BIOS: install grub
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
         run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
-        run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
-        print("GRUB installation complete.")
+    run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
+    print("GRUB installation complete.")
+    umount_chroot_dirs()
 #!/usr/bin/env python3
 # --- Modular Installer Inspired by archinstall ---
 import subprocess
@@ -53,20 +81,20 @@ DESKTOP_ENVIRONMENTS = {
 def run_cmd(cmd, check=True, chroot=False):
     if chroot:
         cmd = f"chroot /mnt /bin/bash -c '{cmd}'"
-    print(f"\n[RUNNING] {cmd}")
+    print(f"\n{Style.OKBLUE}[RUNNING]{Style.ENDC} {cmd}")
     result = subprocess.run(cmd, shell=True)
     if check and result.returncode != 0:
         print(f"[ERROR] Command failed: {cmd}")
         sys.exit(1)
 
 def select_disk():
-    print("\nAvailable disks:")
+    print(f"\n{Style.HEADER}{Style.BOLD}Available disks:{Style.ENDC}")
     run_cmd("lsblk -d -o NAME,SIZE,MODEL")
     disk = input("Enter the disk to install Void Linux on (e.g., sda): ")
     return f"/dev/{disk}"
 
 def auto_partition_disk(disk, uefi, use_swap, swap_size):
-    print(f"\nAuto-partitioning {disk} (this will erase all data on the disk!)")
+    print(f"\n{Style.WARNING}{Style.BOLD}Auto-partitioning {disk} (this will erase all data on the disk!){Style.ENDC}")
     if uefi:
         if use_swap:
             print(f"UEFI detected: Will create EFI (512M, type ef00), root (ext4), and swap ({swap_size}) partitions.")
@@ -98,7 +126,7 @@ def auto_partition_disk(disk, uefi, use_swap, swap_size):
         else:
             run_cmd(f"sgdisk -n 1:0:0 -t 1:8300 {disk}")    # root (rest of disk)
     run_cmd(f"partprobe {disk}")
-    print("Partitions created:")
+    print(f"{Style.OKGREEN}Partitions created:{Style.ENDC}")
     run_cmd(f"lsblk {disk}")
 
 def format_auto_partitions(disk, uefi, use_swap):
@@ -129,28 +157,30 @@ def mount_partitions(root):
     run_cmd(f"mount {root} /mnt")
 
 def setup_mirrors():
-    print("\nSetting up Void Linux mirrors...")
+    print(f"\n{Style.OKCYAN}Setting up Void Linux mirrors...{Style.ENDC}")
     repo_conf = f"repository={VOID_MIRROR}\n"
     with open("/mnt/etc/xbps.d/00-repository-main.conf", "w") as f:
         f.write(repo_conf)
 
 def install_base():
-    print("\nInstalling base system from mirrors...")
+    print(f"\n{Style.OKCYAN}Installing base system from mirrors...{Style.ENDC}")
     run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {BASE_PKGS}")
 
 def create_user():
-    print("\nUser creation:")
+    print(f"\n{Style.HEADER}{Style.BOLD}User creation:{Style.ENDC}")
     username = input("Enter username: ")
     password = getpass.getpass("Enter password: ")
+    mount_chroot_dirs()
     run_cmd(f"useradd -m -G wheel,audio,video -s /bin/bash {username}", chroot=True)
     run_cmd(f"echo '{username}:{password}' | chpasswd", chroot=True)
     # Add sudo
     run_cmd(f"xbps-install -Sy -y sudo", chroot=True)
     run_cmd(f"echo '{username} ALL=(ALL) ALL' >> /mnt/etc/sudoers.d/{username}", check=True)
     print(f"User {username} created and sudo enabled.")
+    umount_chroot_dirs()
 
 def install_desktop_and_sound():
-    print("\nAvailable desktop environments:")
+    print(f"\n{Style.HEADER}{Style.BOLD}Available desktop environments:{Style.ENDC}")
     for i, de in enumerate(DESKTOP_ENVIRONMENTS.keys()):
         print(f"  {i+1}. {de}")
     choice = input("Select desktop environment [number, default none]: ")
@@ -163,7 +193,7 @@ def install_desktop_and_sound():
     # Sound packages (ALSA, Pulse, PipeWire)
     sound_pkgs = "alsa-utils pulseaudio pavucontrol pipewire wireplumber sof-firmware"
     if pkgs:
-        print(f"Installing {de_key} and sound packages...")
+        print(f"{Style.OKCYAN}Installing {de_key} and sound packages...{Style.ENDC}")
     run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {pkgs} {sound_pkgs}")
         # Enable display manager
     if de_key == "xfce":
@@ -173,24 +203,24 @@ def install_desktop_and_sound():
     elif de_key == "kde":
             run_cmd("ln -sf /etc/sv/sddm /mnt/etc/runit/runsvdir/default/", check=False)
     else:
-        print("No desktop environment will be installed. Installing sound packages only...")
-        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {sound_pkgs}")
+        print(f"{Style.WARNING}No desktop environment will be installed. Installing sound packages only...{Style.ENDC}")
+    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {sound_pkgs}")
     # Enable sound services
     run_cmd("ln -sf /etc/sv/dbus /mnt/etc/runit/runsvdir/default/", check=False)
     run_cmd("ln -sf /etc/sv/pipewire /mnt/etc/runit/runsvdir/default/", check=False)
     run_cmd("ln -sf /etc/sv/pulseaudio /mnt/etc/runit/runsvdir/default/", check=False)
-    print("Desktop and sound setup complete.")
+    print(f"{Style.OKGREEN}Desktop and sound setup complete.{Style.ENDC}")
 
     return
 
 def manual_partition_disk(disk):
-    print(f"\nManual partitioning for {disk}.")
-    print("You will be dropped into cfdisk. Create partitions as needed (root, swap, home, EFI, etc.).")
+    print(f"\n{Style.WARNING}{Style.BOLD}Manual partitioning for {disk}.{Style.ENDC}")
+    print(f"{Style.OKCYAN}You will be dropped into cfdisk. Create partitions as needed (root, swap, home, EFI, etc.).{Style.ENDC}")
     input("Press Enter to continue...")
     run_cmd(f"cfdisk {disk}")
 
 def format_and_mount_manual():
-    print("\nList partitions:")
+    print(f"\n{Style.HEADER}{Style.BOLD}List partitions:{Style.ENDC}")
     run_cmd("lsblk -o NAME,SIZE,TYPE,MOUNTPOINT")
     partitions = []
     while True:
@@ -217,19 +247,19 @@ def format_and_mount_manual():
 
     print("=== Void Linux Interactive Installer ===")
     uefi = detect_uefi()
-    if uefi:
-        print("System booted in UEFI mode.")
-        print("For UEFI, you need an EFI partition (FAT32, 512M recommended) mounted at /boot/efi.")
+    if pkgs:
+        print(f"{Style.OKCYAN}Installing {de_key} and sound packages...{Style.ENDC}")
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {pkgs} {sound_pkgs}")
+        # Enable display manager
+        if de_key == "xfce":
+            run_cmd("ln -sf /etc/sv/lightdm /mnt/etc/runit/runsvdir/default/", check=False)
+        elif de_key == "gnome":
+            run_cmd("ln -sf /etc/sv/gdm /mnt/etc/runit/runsvdir/default/", check=False)
+        elif de_key == "kde":
+            run_cmd("ln -sf /etc/sv/sddm /mnt/etc/runit/runsvdir/default/", check=False)
     else:
-        print("System booted in Legacy BIOS mode.")
-        print("For BIOS, you need a root partition (ext4) and swap.")
-    disk = select_disk()
-    mode = input("Partitioning mode? [a]uto/[m]anual: ").strip().lower()
-    if mode == "a":
-        auto_partition_disk(disk, uefi)
-        root = format_auto_partitions(disk, uefi)
-        # mount_partitions(root) # now handled in format_auto_partitions
-    else:
+        print(f"{Style.WARNING}No desktop environment will be installed. Installing sound packages only...{Style.ENDC}")
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {sound_pkgs}")
         manual_partition_disk(disk)
         format_and_mount_manual()
     install_base()
@@ -240,14 +270,14 @@ def format_and_mount_manual():
     print("\nInstallation steps complete! System is ready to reboot.")
 
 def main():
-    print("=== Void Linux Interactive Installer ===")
+    print(f"{Style.BOLD}{Style.OKGREEN}=== Void Linux Interactive Installer ==={Style.ENDC}")
     uefi = detect_uefi()
     if uefi:
-        print("System booted in UEFI mode.")
-        print("For UEFI, you need an EFI partition (FAT32, 512M recommended) mounted at /boot/efi.")
+        print(f"{Style.OKCYAN}System booted in UEFI mode.{Style.ENDC}")
+        print(f"{Style.OKBLUE}For UEFI, you need an EFI partition (FAT32, 512M recommended) mounted at /boot/efi.{Style.ENDC}")
     else:
-        print("System booted in Legacy BIOS mode.")
-        print("For BIOS, you need a root partition (ext4) and swap.")
+        print(f"{Style.OKCYAN}System booted in Legacy BIOS mode.{Style.ENDC}")
+        print(f"{Style.OKBLUE}For BIOS, you need a root partition (ext4) and swap.{Style.ENDC}")
     disk = select_disk()
     mode = input("Partitioning mode? [a]uto/[m]anual: ").strip().lower()
     use_swap = False
@@ -268,7 +298,7 @@ def main():
     create_user()
     install_desktop_and_sound()
     install_bootloader(disk)
-    print("\nInstallation steps complete! System is ready to reboot.")
+    print(f"\n{Style.OKGREEN}{Style.BOLD}Installation steps complete! System is ready to reboot.{Style.ENDC}")
 
 if __name__ == "__main__":
     main()
