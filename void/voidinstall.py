@@ -161,7 +161,7 @@ def install_desktop_and_sound():
         de_key = "none"
     pkgs = DESKTOP_ENVIRONMENTS[de_key]
     # Sound packages (ALSA, Pulse, PipeWire)
-    sound_pkgs = "alsa-utils pulseaudio pavucontrol pipewire pipewire-alsa pipewire-pulse"
+    sound_pkgs = "alsa-utils pulseaudio pavucontrol pipewire wireplumber sof-firmware"
     if pkgs:
         print(f"Installing {de_key} and sound packages...")
     run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {pkgs} {sound_pkgs}")
