@@ -623,7 +623,7 @@ def main():
     install_hardware_packages()
     verify_hardware_installation()
 
-    # If LUKS was used, update crypttab, fstab, regenerate initramfs, and update GRUB
+    # If LUKS was used, update crypttab, fstab, regenerate initramfs, and update GRUB config (but do NOT run grub-mkconfig here)
     if luks and root_for_crypt:
         print(f"{Style.OKCYAN}Configuring crypttab, fstab, and initramfs for LUKS...{Style.ENDC}")
         # crypttab
@@ -641,12 +641,11 @@ def main():
                     f.write(line)
         # Regenerate initramfs
         run_cmd("chroot /mnt xbps-reconfigure -fa")
-        # Update GRUB config for cryptdevice
+        # Update GRUB config for cryptdevice (but do not run grub-mkconfig yet)
         grub_cfg = "/mnt/etc/default/grub"
         if os.path.exists(grub_cfg):
             with open(grub_cfg, "a") as f:
                 f.write(f"\nGRUB_CMDLINE_LINUX=\"cryptdevice=UUID={root_uuid}:{luks_name} root=/dev/mapper/{luks_name}\"\n")
-        run_cmd("chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
 
     create_user()
     install_desktop_and_sound()
