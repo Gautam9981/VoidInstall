@@ -94,7 +94,7 @@ def run_cmd(cmd, check=True, chroot=False):
 
 def mount_chroot_dirs():
     print(f"{Style.OKBLUE}Mounting chroot directories...{Style.ENDC}")
-    run_cmd("mkdir -p /mnt/dev /mnt/dev/pts /mnt/proc /mnt/sys /mnt/run", check=True)
+    run_cmd("mkdir -p /mnt/dev /mnt/dev/pts /mnt/proc /mnt/sys /mnt/run", check=False)
     run_cmd("mount --bind /dev /mnt/dev")
     run_cmd("mount --bind /dev/pts /mnt/dev/pts")
     run_cmd("mount -t proc none /mnt/proc")
