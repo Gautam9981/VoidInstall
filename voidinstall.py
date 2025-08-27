@@ -94,6 +94,7 @@ def run_cmd(cmd, check=True, chroot=False):
 
 def mount_chroot_dirs():
     print(f"{Style.OKBLUE}Mounting chroot directories...{Style.ENDC}")
+    run_cmd("mkdir -p /mnt/dev /mnt/dev/pts /mnt/proc /mnt/sys /mnt/run", check=True)
     run_cmd("mount --bind /dev /mnt/dev")
     run_cmd("mount --bind /dev/pts /mnt/dev/pts")
     run_cmd("mount -t proc none /mnt/proc")
@@ -526,18 +527,100 @@ def main():
     disk = select_disk()
     mode = input("Partitioning mode? [a]uto/[m]anual: ").strip().lower()
     
+
     use_swap = False
     swap_size = ""
+    luks = False
+    lvm = False
+    luks_name = "cryptroot"
+    luks_root = ""
     if mode == "a":
         swap_choice = input("Create a swap partition? [y/N]: ").strip().lower()
         if swap_choice == "y":
             use_swap = True
             swap_size = input("Enter swap size (e.g., 2G, 512M): ").strip()
+        luks_choice = input("Encrypt root partition with LUKS? [y/N]: ").strip().lower()
+        if luks_choice == "y":
+            luks = True
+            lvm_choice = input("Use LVM inside LUKS? [y/N]: ").strip().lower()
+            if lvm_choice == "y":
+                lvm = True
         auto_partition_disk(disk, uefi, use_swap, swap_size)
         root = format_auto_partitions(disk, uefi, use_swap)
+        if luks:
+            # Setup LUKS on root partition
+            print(f"{Style.OKCYAN}Setting up LUKS encryption on {root}...{Style.ENDC}")
+            run_cmd(f"cryptsetup luksFormat {root}")
+            run_cmd(f"cryptsetup open {root} {luks_name}")
+            luks_root = f"/dev/mapper/{luks_name}"
+            if lvm:
+                print(f"{Style.OKCYAN}Setting up LVM inside LUKS...{Style.ENDC}")
+                run_cmd(f"pvcreate {luks_root}")
+                run_cmd(f"vgcreate vg0 {luks_root}")
+                run_cmd(f"lvcreate -L 18G -n root vg0")
+                if use_swap:
+                    run_cmd(f"lvcreate -L {swap_size} -n swap vg0")
+                run_cmd(f"mkfs.ext4 /dev/vg0/root")
+                run_cmd(f"mount /dev/vg0/root /mnt")
+                if use_swap:
+                    run_cmd(f"mkswap /dev/vg0/swap")
+                    run_cmd(f"swapon /dev/vg0/swap")
+                root_for_crypt = "/dev/vg0/root"
+            else:
+                run_cmd(f"mkfs.ext4 {luks_root}")
+                run_cmd(f"mount {luks_root} /mnt")
+                if use_swap:
+                    swap_part = f"{disk}3" if uefi else f"{disk}2"
+                    run_cmd(f"mkswap {swap_part}")
+                    run_cmd(f"swapon {swap_part}")
+                root_for_crypt = luks_root
+            if uefi:
+                efi = f"{disk}1"
+                run_cmd(f"mkdir -p /mnt/boot/efi")
+                run_cmd(f"mount {efi} /mnt/boot/efi")
     else:
         manual_partition_disk(disk)
         format_and_mount_manual()
+        # If user wants encryption in manual mode, prompt for root device
+        luks_choice = input("Did you set up LUKS encryption for root? [y/N]: ").strip().lower()
+        if luks_choice == "y":
+            luks = True
+            root_for_crypt = input("Enter the device path for the encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
+            root = root_for_crypt
+
+    # Mount chroot dirs before any installation
+    mount_chroot_dirs()
+
+    install_base()
+    setup_mirrors()
+    install_hardware_packages()
+    verify_hardware_installation()
+
+    # If LUKS was used, update crypttab, fstab, regenerate initramfs, and update GRUB
+    if luks and 'root' in locals():
+        print(f"{Style.OKCYAN}Configuring crypttab, fstab, and initramfs for LUKS...{Style.ENDC}")
+        # crypttab
+        root_uuid = subprocess.check_output(f"blkid -s UUID -o value {root}", shell=True, text=True).strip()
+        with open("/mnt/etc/crypttab", "w") as f:
+            f.write(f"{luks_name} UUID={root_uuid} none luks,discard\n")
+        # fstab (ensure root is /dev/mapper/cryptroot)
+        with open("/mnt/etc/fstab", "r") as f:
+            lines = f.readlines()
+        with open("/mnt/etc/fstab", "w") as f:
+            for line in lines:
+                if "/mnt" in line or root in line:
+                    f.write(f"/dev/mapper/{luks_name} / ext4 defaults 0 1\n")
+                else:
+                    f.write(line)
+        # Regenerate initramfs
+        run_cmd("chroot /mnt xbps-reconfigure -fa")
+        # Update GRUB config for cryptdevice
+        grub_cfg = "/mnt/etc/default/grub"
+        if os.path.exists(grub_cfg):
+            with open(grub_cfg, "a") as f:
+                f.write(f"\nGRUB_CMDLINE_LINUX=\"cryptdevice=UUID={root_uuid}:{luks_name} root=/dev/mapper/{luks_name}\"\n")
+        run_cmd("chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
+
 
     # Mount chroot dirs before any installation
     mount_chroot_dirs()
