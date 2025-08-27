@@ -1,3 +1,97 @@
+#!/usr/bin/env python3
+# --- Modular Installer Inspired by archinstall ---
+import subprocess
+import sys
+import getpass
+import os
+import shutil
+
+VOID_MIRROR = "https://repo-default.voidlinux.org/current"
+BASE_PKGS = "base-system"
+DESKTOP_ENVIRONMENTS = {
+    "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter",
+    "gnome": "gnome gdm",
+    "kde": "kde5 sddm",
+    "none": ""
+}
+
+# Required dependencies for the installer
+REQUIRED_DEPS = [
+    "util-linux",      # for lsblk, mount, umount, wipefs, cfdisk
+    "gptfdisk",        # for sgdisk
+    "parted",          # for partprobe
+    "e2fsprogs",       # for mkfs.ext4
+    "dosfstools",      # for mkfs.vfat
+    "xbps",            # for xbps-install (should be included in live image)
+    "coreutils",       # for basic commands
+    "procps-ng",       # for process management
+    "which",           # for command checking
+]
+
+def check_dependencies():
+    """Check if required dependencies are available and install missing ones."""
+    print(f"{Style.HEADER}{Style.BOLD}Checking dependencies...{Style.ENDC}")
+    
+    missing_deps = []
+    command_checks = {
+        'lsblk': 'util-linux',
+        'sgdisk': 'gptfdisk', 
+        'partprobe': 'parted',
+        'mkfs.ext4': 'e2fsprogs',
+        'mkfs.vfat': 'dosfstools',
+        'xbps-install': 'xbps',
+        'mount': 'util-linux',
+        'umount': 'util-linux',
+        'cfdisk': 'util-linux',
+        'wipefs': 'util-linux',
+        'lspci': 'pciutils',
+        'lsusb': 'usbutils'
+    }
+    
+    for cmd, package in command_checks.items():
+        if not shutil.which(cmd):
+            if package not in missing_deps:
+                missing_deps.append(package)
+            print(f"{Style.WARNING}Missing command: {cmd} (from package: {package}){Style.ENDC}")
+    
+    if missing_deps:
+        print(f"\n{Style.FAIL}Missing dependencies: {' '.join(missing_deps)}{Style.ENDC}")
+        print(f"{Style.OKCYAN}Attempting to install missing dependencies...{Style.ENDC}")
+        
+        try:
+            # Update package database first
+            run_cmd("xbps-install -S", check=False)
+            # Install missing packages
+            deps_str = ' '.join(missing_deps)
+            run_cmd(f"xbps-install -y {deps_str}")
+            print(f"{Style.OKGREEN}Successfully installed missing dependencies.{Style.ENDC}")
+        except Exception as e:
+            print(f"{Style.FAIL}Failed to install dependencies: {e}{Style.ENDC}")
+            print(f"{Style.WARNING}Please ensure you're running this on a Void Linux live system with internet access.{Style.ENDC}")
+            sys.exit(1)
+    else:
+        print(f"{Style.OKGREEN}All required dependencies are available.{Style.ENDC}")
+
+class Style:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+def run_cmd(cmd, check=True, chroot=False):
+    if chroot:
+        cmd = f"chroot /mnt /bin/bash -c '{cmd}'"
+    print(f"\n{Style.OKBLUE}[RUNNING]{Style.ENDC} {cmd}")
+    result = subprocess.run(cmd, shell=True)
+    if check and result.returncode != 0:
+        print(f"[ERROR] Command failed: {cmd}")
+        sys.exit(1)
+
 def mount_chroot_dirs():
     print(f"{Style.OKBLUE}Mounting chroot directories...{Style.ENDC}")
     run_cmd("mount --bind /dev /mnt/dev")
@@ -13,16 +107,6 @@ def umount_chroot_dirs():
     run_cmd("umount -l /mnt/proc", check=False)
     run_cmd("umount -l /mnt/sys", check=False)
     run_cmd("umount -l /mnt/run", check=False)
-class Style:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
 
 def unmount_disk_partitions(disk):
     # Unmount all mounted partitions of the disk
@@ -36,6 +120,87 @@ def unmount_disk_partitions(disk):
             partname, mnt = parts
             if mnt != "" and partname.startswith(disk.replace('/dev/', '')):
                 run_cmd(f"umount /dev/{partname}", check=False)
+
+def detect_hardware():
+    """Detect hardware and determine required packages."""
+    print(f"\n{Style.HEADER}{Style.BOLD}Detecting hardware...{Style.ENDC}")
+    
+    hardware_pkgs = []
+    
+    # Detect CPU and microcode
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            cpu_info = f.read().lower()
+        
+        if 'intel' in cpu_info:
+            print(f"{Style.OKCYAN}Intel CPU detected - adding Intel microcode{Style.ENDC}")
+            hardware_pkgs.append("intel-ucode")
+        elif 'amd' in cpu_info:
+            print(f"{Style.OKCYAN}AMD CPU detected - adding AMD microcode{Style.ENDC}")
+            hardware_pkgs.append("linux-firmware-amd")
+    except Exception as e:
+        print(f"{Style.WARNING}Could not detect CPU type: {e}{Style.ENDC}")
+    
+    # Detect GPU
+    try:
+        result = subprocess.run("lspci | grep -i vga", shell=True, capture_output=True, text=True)
+        gpu_info = result.stdout.lower()
+        
+        if 'nvidia' in gpu_info:
+            print(f"{Style.OKCYAN}NVIDIA GPU detected - adding proprietary drivers{Style.ENDC}")
+            hardware_pkgs.extend(["nvidia", "nvidia-libs-32bit"])
+        elif 'amd' in gpu_info or 'ati' in gpu_info:
+            print(f"{Style.OKCYAN}AMD GPU detected - adding Mesa drivers{Style.ENDC}")
+            hardware_pkgs.extend(["mesa-dri", "mesa-vulkan-radeon", "mesa-vaapi", "mesa-vdpau"])
+        elif 'intel' in gpu_info:
+            print(f"{Style.OKCYAN}Intel GPU detected - adding Intel drivers{Style.ENDC}")
+            hardware_pkgs.extend(["mesa-dri", "intel-video-accel", "mesa-vulkan-intel"])
+            
+    except Exception as e:
+        print(f"{Style.WARNING}Could not detect GPU: {e}{Style.ENDC}")
+    
+    # Detect WiFi hardware
+    try:
+        result = subprocess.run("lspci | grep -i wireless", shell=True, capture_output=True, text=True)
+        wifi_info = result.stdout.lower()
+        
+        if wifi_info:
+            print(f"{Style.OKCYAN}WiFi hardware detected - adding firmware{Style.ENDC}")
+            hardware_pkgs.extend(["linux-firmware-network", "wpa_supplicant", "NetworkManager"])
+            
+    except Exception as e:
+        print(f"{Style.WARNING}Could not detect WiFi hardware: {e}{Style.ENDC}")
+    
+    # Detect Bluetooth
+    try:
+        result = subprocess.run("lsusb | grep -i bluetooth", shell=True, capture_output=True, text=True)
+        bt_info = result.stdout.lower()
+        
+        if bt_info:
+            print(f"{Style.OKCYAN}Bluetooth hardware detected - adding support{Style.ENDC}")
+            hardware_pkgs.extend(["bluez", "bluez-alsa"])
+            
+    except Exception as e:
+        print(f"{Style.WARNING}Could not detect Bluetooth hardware: {e}{Style.ENDC}")
+    
+    return hardware_pkgs
+
+def setup_nonfree_repos():
+    """Enable void-repo-nonfree and void-repo-multilib-nonfree repositories."""
+    print(f"\n{Style.OKCYAN}Setting up non-free repositories...{Style.ENDC}")
+    
+    # Install non-free repository packages
+    try:
+        run_cmd("xbps-install -Sy void-repo-nonfree void-repo-multilib-nonfree", check=False)
+        # Update package index with new repositories
+        run_cmd("xbps-install -S")
+        print(f"{Style.OKGREEN}Non-free repositories enabled successfully.{Style.ENDC}")
+        return True
+    except Exception as e:
+        print(f"{Style.WARNING}Could not enable non-free repositories: {e}{Style.ENDC}")
+        print(f"{Style.WARNING}Some hardware-specific packages may not be available.{Style.ENDC}")
+        return False
+
 def detect_uefi():
     # UEFI systems have /sys/firmware/efi
     try:
@@ -43,49 +208,6 @@ def detect_uefi():
             return True
     except FileNotFoundError:
         return False
-
-def install_bootloader(disk):
-    print("\nInstalling GRUB bootloader...")
-    uefi = detect_uefi()
-    mount_chroot_dirs()
-    if uefi:
-        # UEFI: install grub-x86_64-efi and efibootmgr
-        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
-        efi_part = input("Enter EFI partition (e.g., /dev/sda1, or leave blank if already mounted): ")
-        if efi_part:
-            run_cmd(f"mkdir -p /mnt/boot/efi")
-            run_cmd(f"mount {efi_part} /mnt/boot/efi")
-        run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck")
-    else:
-        # Legacy BIOS: install grub
-        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
-        run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
-    run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
-    print("GRUB installation complete.")
-    umount_chroot_dirs()
-#!/usr/bin/env python3
-# --- Modular Installer Inspired by archinstall ---
-import subprocess
-import sys
-import getpass
-
-VOID_MIRROR = "https://repo-default.voidlinux.org/current"
-BASE_PKGS = "base-system"
-DESKTOP_ENVIRONMENTS = {
-    "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter",
-    "gnome": "gnome gdm",
-    "kde": "kde5 sddm",
-    "none": ""
-}
-
-def run_cmd(cmd, check=True, chroot=False):
-    if chroot:
-        cmd = f"chroot /mnt /bin/bash -c '{cmd}'"
-    print(f"\n{Style.OKBLUE}[RUNNING]{Style.ENDC} {cmd}")
-    result = subprocess.run(cmd, shell=True)
-    if check and result.returncode != 0:
-        print(f"[ERROR] Command failed: {cmd}")
-        sys.exit(1)
 
 def select_disk():
     print(f"\n{Style.HEADER}{Style.BOLD}Available disks:{Style.ENDC}")
@@ -153,66 +275,6 @@ def format_auto_partitions(disk, uefi, use_swap):
             run_cmd(f"swapon {swap}")
         return root
 
-def mount_partitions(root):
-    run_cmd(f"mount {root} /mnt")
-
-def setup_mirrors():
-    print(f"\n{Style.OKCYAN}Setting up Void Linux mirrors...{Style.ENDC}")
-    repo_conf = f"repository={VOID_MIRROR}\n"
-    with open("/mnt/etc/xbps.d/00-repository-main.conf", "w") as f:
-        f.write(repo_conf)
-
-def install_base():
-    print(f"\n{Style.OKCYAN}Installing base system from mirrors...{Style.ENDC}")
-    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {BASE_PKGS}")
-
-def create_user():
-    print(f"\n{Style.HEADER}{Style.BOLD}User creation:{Style.ENDC}")
-    username = input("Enter username: ")
-    password = getpass.getpass("Enter password: ")
-    mount_chroot_dirs()
-    run_cmd(f"useradd -m -G wheel,audio,video -s /bin/bash {username}", chroot=True)
-    run_cmd(f"echo '{username}:{password}' | chpasswd", chroot=True)
-    # Add sudo
-    run_cmd(f"xbps-install -Sy -y sudo", chroot=True)
-    run_cmd(f"echo '{username} ALL=(ALL) ALL' >> /mnt/etc/sudoers.d/{username}", check=True)
-    print(f"User {username} created and sudo enabled.")
-    umount_chroot_dirs()
-
-def install_desktop_and_sound():
-    print(f"\n{Style.HEADER}{Style.BOLD}Available desktop environments:{Style.ENDC}")
-    for i, de in enumerate(DESKTOP_ENVIRONMENTS.keys()):
-        print(f"  {i+1}. {de}")
-    choice = input("Select desktop environment [number, default none]: ")
-    try:
-        idx = int(choice) - 1
-        de_key = list(DESKTOP_ENVIRONMENTS.keys())[idx]
-    except (ValueError, IndexError):
-        de_key = "none"
-    pkgs = DESKTOP_ENVIRONMENTS[de_key]
-    # Sound packages (ALSA, Pulse, PipeWire)
-    sound_pkgs = "alsa-utils pulseaudio pavucontrol pipewire wireplumber sof-firmware"
-    if pkgs:
-        print(f"{Style.OKCYAN}Installing {de_key} and sound packages...{Style.ENDC}")
-    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {pkgs} {sound_pkgs}")
-        # Enable display manager
-    if de_key == "xfce":
-            run_cmd("ln -sf /etc/sv/lightdm /mnt/etc/runit/runsvdir/default/", check=False)
-    elif de_key == "gnome":
-            run_cmd("ln -sf /etc/sv/gdm /mnt/etc/runit/runsvdir/default/", check=False)
-    elif de_key == "kde":
-            run_cmd("ln -sf /etc/sv/sddm /mnt/etc/runit/runsvdir/default/", check=False)
-    else:
-        print(f"{Style.WARNING}No desktop environment will be installed. Installing sound packages only...{Style.ENDC}")
-    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {sound_pkgs}")
-    # Enable sound services
-    run_cmd("ln -sf /etc/sv/dbus /mnt/etc/runit/runsvdir/default/", check=False)
-    run_cmd("ln -sf /etc/sv/pipewire /mnt/etc/runit/runsvdir/default/", check=False)
-    run_cmd("ln -sf /etc/sv/pulseaudio /mnt/etc/runit/runsvdir/default/", check=False)
-    print(f"{Style.OKGREEN}Desktop and sound setup complete.{Style.ENDC}")
-
-    return
-
 def manual_partition_disk(disk):
     print(f"\n{Style.WARNING}{Style.BOLD}Manual partitioning for {disk}.{Style.ENDC}")
     print(f"{Style.OKCYAN}You will be dropped into cfdisk. Create partitions as needed (root, swap, home, EFI, etc.).{Style.ENDC}")
@@ -245,8 +307,71 @@ def format_and_mount_manual():
             run_cmd(f"mount {part} /mnt{mnt}")
     return
 
-    print("=== Void Linux Interactive Installer ===")
-    uefi = detect_uefi()
+def setup_mirrors():
+    print(f"\n{Style.OKCYAN}Setting up Void Linux mirrors...{Style.ENDC}")
+    run_cmd("mkdir -p /mnt/etc/xbps.d")
+    repo_conf = f"repository={VOID_MIRROR}\n"
+    with open("/mnt/etc/xbps.d/00-repository-main.conf", "w") as f:
+        f.write(repo_conf)
+
+def install_base():
+    print(f"\n{Style.OKCYAN}Installing base system from mirrors...{Style.ENDC}")
+    
+    # Detect hardware and get required packages
+    hardware_pkgs = detect_hardware()
+    
+    # Combine base packages with hardware-specific packages
+    all_pkgs = BASE_PKGS
+    if hardware_pkgs:
+        all_pkgs += " " + " ".join(hardware_pkgs)
+        print(f"{Style.OKCYAN}Installing hardware-specific packages: {' '.join(hardware_pkgs)}{Style.ENDC}")
+    
+    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {all_pkgs}")
+    
+    # Enable hardware-specific services
+    if "NetworkManager" in hardware_pkgs:
+        run_cmd("ln -sf /etc/sv/NetworkManager /mnt/etc/runit/runsvdir/default/", check=False)
+        print(f"{Style.OKGREEN}NetworkManager service enabled.{Style.ENDC}")
+    
+    if "bluez" in hardware_pkgs:
+        run_cmd("ln -sf /etc/sv/bluetoothd /mnt/etc/runit/runsvdir/default/", check=False)
+        print(f"{Style.OKGREEN}Bluetooth service enabled.{Style.ENDC}")
+    
+    # Handle NVIDIA-specific setup
+    if "nvidia" in hardware_pkgs:
+        print(f"{Style.WARNING}NVIDIA drivers installed. You may need to blacklist nouveau manually.{Style.ENDC}")
+        mount_chroot_dirs()
+        run_cmd("echo 'blacklist nouveau' >> /mnt/etc/modprobe.d/nvidia.conf", check=False)
+        umount_chroot_dirs()
+
+def create_user():
+    print(f"\n{Style.HEADER}{Style.BOLD}User creation:{Style.ENDC}")
+    username = input("Enter username: ")
+    password = getpass.getpass("Enter password: ")
+    mount_chroot_dirs()
+    run_cmd(f"useradd -m -G wheel,audio,video -s /bin/bash {username}", chroot=True)
+    run_cmd(f"echo '{username}:{password}' | chpasswd", chroot=True)
+    # Add sudo
+    run_cmd(f"xbps-install -Sy -y sudo", chroot=True)
+    run_cmd(f"mkdir -p /mnt/etc/sudoers.d", check=False)
+    run_cmd(f"echo '{username} ALL=(ALL) ALL' > /mnt/etc/sudoers.d/{username}", check=True)
+    print(f"User {username} created and sudo enabled.")
+    umount_chroot_dirs()
+
+def install_desktop_and_sound():
+    print(f"\n{Style.HEADER}{Style.BOLD}Available desktop environments:{Style.ENDC}")
+    for i, de in enumerate(DESKTOP_ENVIRONMENTS.keys()):
+        print(f"  {i+1}. {de}")
+    choice = input("Select desktop environment [number, default none]: ")
+    try:
+        idx = int(choice) - 1
+        de_key = list(DESKTOP_ENVIRONMENTS.keys())[idx]
+    except (ValueError, IndexError):
+        de_key = "none"
+    pkgs = DESKTOP_ENVIRONMENTS[de_key]
+    # Sound packages (ALSA, Pulse, PipeWire)
+    sound_pkgs = "alsa-utils pulseaudio pavucontrol pipewire wireplumber sof-firmware"
+    
     if pkgs:
         print(f"{Style.OKCYAN}Installing {de_key} and sound packages...{Style.ENDC}")
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {pkgs} {sound_pkgs}")
@@ -260,17 +385,49 @@ def format_and_mount_manual():
     else:
         print(f"{Style.WARNING}No desktop environment will be installed. Installing sound packages only...{Style.ENDC}")
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {sound_pkgs}")
-        manual_partition_disk(disk)
-        format_and_mount_manual()
-    install_base()
-    setup_mirrors()
-    create_user()
-    install_desktop_and_sound()
-    install_bootloader(disk)
-    print("\nInstallation steps complete! System is ready to reboot.")
+    
+    # Enable sound services
+    run_cmd("ln -sf /etc/sv/dbus /mnt/etc/runit/runsvdir/default/", check=False)
+    run_cmd("ln -sf /etc/sv/pipewire /mnt/etc/runit/runsvdir/default/", check=False)
+    run_cmd("ln -sf /etc/sv/pulseaudio /mnt/etc/runit/runsvdir/default/", check=False)
+    print(f"{Style.OKGREEN}Desktop and sound setup complete.{Style.ENDC}")
+
+def install_bootloader(disk):
+    print("\nInstalling GRUB bootloader...")
+    uefi = detect_uefi()
+    mount_chroot_dirs()
+    if uefi:
+        # UEFI: install grub-x86_64-efi and efibootmgr
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
+        efi_part = input("Enter EFI partition (e.g., /dev/sda1, or leave blank if already mounted): ")
+        if efi_part:
+            run_cmd(f"mkdir -p /mnt/boot/efi")
+            run_cmd(f"mount {efi_part} /mnt/boot/efi")
+        run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck")
+    else:
+        # Legacy BIOS: install grub
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
+        run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
+    run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
+    print("GRUB installation complete.")
+    umount_chroot_dirs()
 
 def main():
     print(f"{Style.BOLD}{Style.OKGREEN}=== Void Linux Interactive Installer ==={Style.ENDC}")
+    
+    # Check if running as root
+    if os.geteuid() != 0:
+        print(f"{Style.FAIL}This installer must be run as root.{Style.ENDC}")
+        sys.exit(1)
+    
+    # Check and install dependencies first
+    check_dependencies()
+    
+    # Setup non-free repositories for hardware support
+    nonfree_available = setup_nonfree_repos()
+    if not nonfree_available:
+        print(f"{Style.WARNING}Continuing without non-free repositories. Some hardware may not be fully supported.{Style.ENDC}")
+    
     uefi = detect_uefi()
     if uefi:
         print(f"{Style.OKCYAN}System booted in UEFI mode.{Style.ENDC}")
@@ -278,8 +435,10 @@ def main():
     else:
         print(f"{Style.OKCYAN}System booted in Legacy BIOS mode.{Style.ENDC}")
         print(f"{Style.OKBLUE}For BIOS, you need a root partition (ext4) and swap.{Style.ENDC}")
+    
     disk = select_disk()
     mode = input("Partitioning mode? [a]uto/[m]anual: ").strip().lower()
+    
     use_swap = False
     swap_size = ""
     if mode == "a":
@@ -289,15 +448,16 @@ def main():
             swap_size = input("Enter swap size (e.g., 2G, 512M): ").strip()
         auto_partition_disk(disk, uefi, use_swap, swap_size)
         root = format_auto_partitions(disk, uefi, use_swap)
-        # mount_partitions(root) # now handled in format_auto_partitions
     else:
         manual_partition_disk(disk)
         format_and_mount_manual()
+    
     install_base()
     setup_mirrors()
     create_user()
     install_desktop_and_sound()
     install_bootloader(disk)
+    
     print(f"\n{Style.OKGREEN}{Style.BOLD}Installation steps complete! System is ready to reboot.{Style.ENDC}")
 
 if __name__ == "__main__":
