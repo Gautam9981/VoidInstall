@@ -94,7 +94,7 @@ def run_cmd(cmd, check=True, chroot=False):
 
 def mount_chroot_dirs():
     print(f"{Style.OKBLUE}Mounting chroot directories...{Style.ENDC}")
-    run_cmd("mkdir -p /mnt/dev /mnt/dev/pts /mnt/proc /mnt/sys /mnt/run", check=False)
+    run_cmd("mkdir -p /mnt/dev /mnt/dev/pts /mnt/proc /mnt/sys /mnt/run", check=True)
     run_cmd("mount --bind /dev /mnt/dev")
     run_cmd("mount --bind /dev/pts /mnt/dev/pts")
     run_cmd("mount -t proc none /mnt/proc")
@@ -533,7 +533,7 @@ def main():
     luks = False
     lvm = False
     luks_name = "cryptroot"
-    luks_root = ""
+    root_for_crypt = None
     if mode == "a":
         swap_choice = input("Create a swap partition? [y/N]: ").strip().lower()
         if swap_choice == "y":
@@ -586,7 +586,6 @@ def main():
         if luks_choice == "y":
             luks = True
             root_for_crypt = input("Enter the device path for the encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
-            root = root_for_crypt
 
     # Mount chroot dirs before any installation
     mount_chroot_dirs()
@@ -597,10 +596,10 @@ def main():
     verify_hardware_installation()
 
     # If LUKS was used, update crypttab, fstab, regenerate initramfs, and update GRUB
-    if luks and 'root' in locals():
+    if luks and root_for_crypt:
         print(f"{Style.OKCYAN}Configuring crypttab, fstab, and initramfs for LUKS...{Style.ENDC}")
         # crypttab
-        root_uuid = subprocess.check_output(f"blkid -s UUID -o value {root}", shell=True, text=True).strip()
+        root_uuid = subprocess.check_output(f"blkid -s UUID -o value {root_for_crypt}", shell=True, text=True).strip()
         with open("/mnt/etc/crypttab", "w") as f:
             f.write(f"{luks_name} UUID={root_uuid} none luks,discard\n")
         # fstab (ensure root is /dev/mapper/cryptroot)
@@ -608,7 +607,7 @@ def main():
             lines = f.readlines()
         with open("/mnt/etc/fstab", "w") as f:
             for line in lines:
-                if "/mnt" in line or root in line:
+                if "/mnt" in line or root_for_crypt in line:
                     f.write(f"/dev/mapper/{luks_name} / ext4 defaults 0 1\n")
                 else:
                     f.write(line)
@@ -621,14 +620,6 @@ def main():
                 f.write(f"\nGRUB_CMDLINE_LINUX=\"cryptdevice=UUID={root_uuid}:{luks_name} root=/dev/mapper/{luks_name}\"\n")
         run_cmd("chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
 
-
-    # Mount chroot dirs before any installation
-    mount_chroot_dirs()
-
-    install_base()
-    setup_mirrors()
-    install_hardware_packages()
-    verify_hardware_installation()
     create_user()
     install_desktop_and_sound()
     install_bootloader(disk)
