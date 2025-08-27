@@ -185,21 +185,7 @@ def detect_hardware():
     
     return hardware_pkgs
 
-def setup_nonfree_repos():
-    """Enable void-repo-nonfree and void-repo-multilib-nonfree repositories."""
-    print(f"\n{Style.OKCYAN}Setting up non-free repositories...{Style.ENDC}")
-    
-    # Install non-free repository packages
-    try:
-        run_cmd("xbps-install -Sy void-repo-nonfree void-repo-multilib-nonfree", check=False)
-        # Update package index with new repositories
-        run_cmd("xbps-install -S")
-        print(f"{Style.OKGREEN}Non-free repositories enabled successfully.{Style.ENDC}")
-        return True
-    except Exception as e:
-        print(f"{Style.WARNING}Could not enable non-free repositories: {e}{Style.ENDC}")
-        print(f"{Style.WARNING}Some hardware-specific packages may not be available.{Style.ENDC}")
-        return False
+
 
 def detect_uefi():
     # UEFI systems have /sys/firmware/efi
@@ -310,9 +296,49 @@ def format_and_mount_manual():
 def setup_mirrors():
     print(f"\n{Style.OKCYAN}Setting up Void Linux mirrors...{Style.ENDC}")
     run_cmd("mkdir -p /mnt/etc/xbps.d")
+    
+    # Main repository
     repo_conf = f"repository={VOID_MIRROR}\n"
     with open("/mnt/etc/xbps.d/00-repository-main.conf", "w") as f:
         f.write(repo_conf)
+    
+    # Add non-free repositories to the target system
+    print(f"{Style.OKCYAN}Setting up non-free repositories in target system...{Style.ENDC}")
+    
+    # Non-free repository
+    nonfree_conf = f"repository={VOID_MIRROR}/nonfree\n"
+    with open("/mnt/etc/xbps.d/10-repository-nonfree.conf", "w") as f:
+        f.write(nonfree_conf)
+    
+    # Multilib non-free repository  
+    multilib_nonfree_conf = f"repository={VOID_MIRROR}/multilib/nonfree\n"
+    with open("/mnt/etc/xbps.d/10-repository-multilib-nonfree.conf", "w") as f:
+        f.write(multilib_nonfree_conf)
+    
+    # Multilib repository (for 32-bit packages)
+    multilib_conf = f"repository={VOID_MIRROR}/multilib\n"
+    with open("/mnt/etc/xbps.d/10-repository-multilib.conf", "w") as f:
+        f.write(multilib_conf)
+    
+    print(f"{Style.OKGREEN}All repositories configured in target system.{Style.ENDC}")
+
+def setup_bootstrap_repos():
+    """Setup non-free repositories for the live system during bootstrap."""
+    print(f"\n{Style.OKCYAN}Setting up non-free repositories for bootstrap...{Style.ENDC}")
+    
+    try:
+        # Install repository packages on live system
+        run_cmd("xbps-install -Sy void-repo-nonfree void-repo-multilib-nonfree", check=False)
+        
+        # Update package database to include new repositories
+        run_cmd("xbps-install -S")
+        
+        print(f"{Style.OKGREEN}Bootstrap repositories configured successfully.{Style.ENDC}")
+        return True
+    except Exception as e:
+        print(f"{Style.WARNING}Could not set up bootstrap repositories: {e}{Style.ENDC}")
+        print(f"{Style.WARNING}Will continue with limited package availability.{Style.ENDC}")
+        return False
 
 def install_base():
     print(f"\n{Style.OKCYAN}Installing base system from mirrors...{Style.ENDC}")
@@ -423,8 +449,8 @@ def main():
     # Check and install dependencies first
     check_dependencies()
     
-    # Setup non-free repositories for hardware support
-    nonfree_available = setup_nonfree_repos()
+    # Setup non-free repositories for bootstrap (live system)
+    nonfree_available = setup_bootstrap_repos()
     if not nonfree_available:
         print(f"{Style.WARNING}Continuing without non-free repositories. Some hardware may not be fully supported.{Style.ENDC}")
     
