@@ -446,10 +446,39 @@ def install_desktop_and_sound():
     run_cmd("ln -sf /etc/sv/pulseaudio /mnt/etc/runit/runsvdir/default/", check=False)
     print(f"{Style.OKGREEN}Desktop and sound setup complete.{Style.ENDC}")
 
+def verify_hardware_installation():
+    """Verify that hardware packages were installed correctly."""
+    print(f"\n{Style.HEADER}{Style.BOLD}Verifying hardware package installation...{Style.ENDC}")
+    
+    # Check for intel-ucode
+    result = subprocess.run("xbps-query -r /mnt intel-ucode", shell=True, capture_output=True, text=True)
+    if result.returncode == 0:
+        print(f"{Style.OKGREEN}✓ Intel microcode installed successfully{Style.ENDC}")
+    else:
+        print(f"{Style.WARNING}✗ Intel microcode not found{Style.ENDC}")
+    
+    # Check for AMD microcode
+    result = subprocess.run("xbps-query -r /mnt linux-firmware-amd", shell=True, capture_output=True, text=True)
+    if result.returncode == 0:
+        print(f"{Style.OKGREEN}✓ AMD microcode installed successfully{Style.ENDC}")
+    
+    # Check for NVIDIA drivers
+    result = subprocess.run("xbps-query -r /mnt nvidia", shell=True, capture_output=True, text=True)
+    if result.returncode == 0:
+        print(f"{Style.OKGREEN}✓ NVIDIA drivers installed successfully{Style.ENDC}")
+    
+    # Check if microcode files exist
+    if os.path.exists("/mnt/lib/firmware/intel-ucode"):
+        print(f"{Style.OKGREEN}✓ Intel microcode firmware files present{Style.ENDC}")
+    
+    if os.path.exists("/mnt/lib/firmware/amd-ucode"):
+        print(f"{Style.OKGREEN}✓ AMD microcode firmware files present{Style.ENDC}")
+
 def install_bootloader(disk):
     print("\nInstalling GRUB bootloader...")
     uefi = detect_uefi()
     mount_chroot_dirs()
+    
     if uefi:
         # UEFI: install grub-x86_64-efi and efibootmgr
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
@@ -457,13 +486,27 @@ def install_bootloader(disk):
         if efi_part:
             run_cmd(f"mkdir -p /mnt/boot/efi")
             run_cmd(f"mount {efi_part} /mnt/boot/efi")
-        run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck")
+        
+        # Try to install GRUB with efibootmgr first
+        print(f"{Style.OKCYAN}Attempting GRUB installation with efibootmgr...{Style.ENDC}")
+        result = subprocess.run(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck", 
+                              shell=True)
+        
+        if result.returncode != 0:
+            print(f"{Style.WARNING}efibootmgr failed (EFI variables not writable). Trying fallback installation...{Style.ENDC}")
+            # Fallback: install without efibootmgr (removable media path)
+            run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck")
+            print(f"{Style.OKGREEN}GRUB installed in removable media mode (should work even without EFI variables).{Style.ENDC}")
+        else:
+            print(f"{Style.OKGREEN}GRUB installed successfully with efibootmgr.{Style.ENDC}")
     else:
         # Legacy BIOS: install grub
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
         run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
+    
+    # Generate GRUB configuration
     run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
-    print("GRUB installation complete.")
+    print(f"{Style.OKGREEN}GRUB installation and configuration complete.{Style.ENDC}")
     umount_chroot_dirs()
 
 def main():
@@ -509,6 +552,7 @@ def main():
     install_base()
     setup_mirrors()
     install_hardware_packages()
+    verify_hardware_installation()
     create_user()
     install_desktop_and_sound()
     install_bootloader(disk)
