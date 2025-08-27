@@ -1,25 +1,4 @@
-def detect_hardware():
-    """Detect hardware and determine required packages."""
-    print(f"\n{Style.HEADER}{Style.BOLD}Detecting hardware...{Style.ENDC}")
-    
-    hardware_pkgs = []
-    
-    # Detect CPU and microcode
-    try:
-        with open('/proc/cpuinfo', 'r') as f:
-            cpu_info = f.read().lower()
-        
-        if 'intel' in cpu_info:
-            print(f"{Style.OKCYAN}Intel CPU detected - adding Intel microcode{Style.ENDC}")
-            hardware_pkgs.append("void-repo-nonfree")  # Ensure nonfree repo is available
-            hardware_pkgs.append("intel-ucode")
-        elif 'amd' in cpu_info:
-            print(f"{Style.OKCYAN}AMD CPU detected - adding AMD microcode{Style.ENDC}")
-            hardware_pkgs.append("linux-firmware-amd")
-    except Exception as e:
-        print(f"{Style.WARNING}Could not detect CPU type: {e}{Style.ENDC}")
-    
-    # Always#!/usr/bin/env python3
+#!/usr/bin/env python3
 # --- Modular Installer Inspired by archinstall ---
 import subprocess
 import sys
@@ -130,17 +109,28 @@ def umount_chroot_dirs():
     run_cmd("umount -l /mnt/run", check=False)
 
 def unmount_disk_partitions(disk):
-    # Unmount all mounted partitions of the disk
-    import re
-    print(f"Unmounting all partitions on {disk}...")
-    # List mounted partitions
+    """
+    Force unmount all mounted partitions of the disk (including /mnt and submounts).
+    """
+    import subprocess
+    print(f"{Style.WARNING}Force unmounting all partitions on {disk}...{Style.ENDC}")
+
+    # 1. Unmount all /mnt submounts (deepest first)
+    result = subprocess.run("mount | grep '/mnt' | awk '{print $3}'", shell=True, capture_output=True, text=True)
+    mnt_points = [mnt for mnt in result.stdout.strip().split('\n') if mnt]
+    for mnt in sorted(mnt_points, key=len, reverse=True):
+        print(f"{Style.WARNING}Force unmounting {mnt}...{Style.ENDC}")
+        run_cmd(f"umount -lf {mnt}", check=False)
+
+    # 2. Unmount all partitions of the disk (in case any are still mounted elsewhere)
     result = subprocess.run("lsblk -ln -o NAME,MOUNTPOINT", shell=True, capture_output=True, text=True)
     for line in result.stdout.strip().split('\n'):
         parts = line.split()
         if len(parts) == 2:
             partname, mnt = parts
-            if mnt != "" and partname.startswith(disk.replace('/dev/', '')):
-                run_cmd(f"umount /dev/{partname}", check=False)
+            if mnt and partname.startswith(disk.replace('/dev/', '')):
+                print(f"{Style.WARNING}Force unmounting /dev/{partname} from {mnt}...{Style.ENDC}")
+                run_cmd(f"umount -lf /dev/{partname}", check=False)
 
 def detect_hardware():
     """Detect hardware and determine required packages."""
