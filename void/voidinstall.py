@@ -31,10 +31,10 @@ def install_bootloader(disk):
         run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck")
     else:
         # Legacy BIOS: install grub
-    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
-    run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
-    run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
-    print("GRUB installation complete.")
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
+        run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
+        run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
+        print("GRUB installation complete.")
 #!/usr/bin/env python3
 # --- Modular Installer Inspired by archinstall ---
 import subprocess
