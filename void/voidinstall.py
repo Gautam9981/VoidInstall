@@ -23,7 +23,7 @@ def install_bootloader(disk):
     uefi = detect_uefi()
     if uefi:
         # UEFI: install grub-x86_64-efi and efibootmgr
-        run_cmd(f"xbps-install -Sy -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
         efi_part = input("Enter EFI partition (e.g., /dev/sda1, or leave blank if already mounted): ")
         if efi_part:
             run_cmd(f"mkdir -p /mnt/boot/efi")
@@ -31,8 +31,8 @@ def install_bootloader(disk):
         run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck")
     else:
         # Legacy BIOS: install grub
-        run_cmd(f"xbps-install -Sy -R {VOID_MIRROR} -r /mnt grub")
-        run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
+    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
+    run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
     run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
     print("GRUB installation complete.")
 #!/usr/bin/env python3
@@ -136,7 +136,7 @@ def setup_mirrors():
 
 def install_base():
     print("\nInstalling base system from mirrors...")
-    run_cmd(f"xbps-install -Sy -R {VOID_MIRROR} -r /mnt {BASE_PKGS}")
+    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {BASE_PKGS}")
 
 def create_user():
     print("\nUser creation:")
@@ -145,7 +145,7 @@ def create_user():
     run_cmd(f"useradd -m -G wheel,audio,video -s /bin/bash {username}", chroot=True)
     run_cmd(f"echo '{username}:{password}' | chpasswd", chroot=True)
     # Add sudo
-    run_cmd(f"xbps-install -Sy sudo", chroot=True)
+    run_cmd(f"xbps-install -Sy -y sudo", chroot=True)
     run_cmd(f"echo '{username} ALL=(ALL) ALL' >> /mnt/etc/sudoers.d/{username}", check=True)
     print(f"User {username} created and sudo enabled.")
 
@@ -164,17 +164,17 @@ def install_desktop_and_sound():
     sound_pkgs = "alsa-utils pulseaudio pavucontrol pipewire pipewire-alsa pipewire-pulse"
     if pkgs:
         print(f"Installing {de_key} and sound packages...")
-        run_cmd(f"xbps-install -Sy -R {VOID_MIRROR} -r /mnt {pkgs} {sound_pkgs}")
+    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {pkgs} {sound_pkgs}")
         # Enable display manager
-        if de_key == "xfce":
+    if de_key == "xfce":
             run_cmd("ln -sf /etc/sv/lightdm /mnt/etc/runit/runsvdir/default/", check=False)
-        elif de_key == "gnome":
+    elif de_key == "gnome":
             run_cmd("ln -sf /etc/sv/gdm /mnt/etc/runit/runsvdir/default/", check=False)
-        elif de_key == "kde":
+    elif de_key == "kde":
             run_cmd("ln -sf /etc/sv/sddm /mnt/etc/runit/runsvdir/default/", check=False)
     else:
         print("No desktop environment will be installed. Installing sound packages only...")
-        run_cmd(f"xbps-install -Sy -R {VOID_MIRROR} -r /mnt {sound_pkgs}")
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {sound_pkgs}")
     # Enable sound services
     run_cmd("ln -sf /etc/sv/dbus /mnt/etc/runit/runsvdir/default/", check=False)
     run_cmd("ln -sf /etc/sv/pipewire /mnt/etc/runit/runsvdir/default/", check=False)
