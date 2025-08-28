@@ -317,12 +317,19 @@ def format_and_mount_manual():
     print(f"\n{Style.HEADER}{Style.BOLD}List partitions:{Style.ENDC}")
     run_cmd("lsblk -o NAME,SIZE,TYPE,MOUNTPOINT")
 
-    # Ask for root partition first (required)
-    root_part = input("Enter the device for the root partition (e.g., /dev/sda2): ").strip()
-    root_fstype = input("Filesystem type for root (e.g., ext4): ").strip()
-    run_cmd(f"umount -lf {root_part}", check=False)
-    run_cmd(f"mkfs.{root_fstype} {root_part}")
-    run_cmd(f"mount {root_part} /mnt")
+
+    # Ask if user already set up LUKS for root
+    luks_root_ready = input("Did you already set up LUKS and open the encrypted root device? [y/N]: ").strip().lower() == 'y'
+    if luks_root_ready:
+        root_part = input("Enter the device path for the opened encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
+        run_cmd(f"mount {root_part} /mnt")
+    else:
+        # Ask for root partition first (required)
+        root_part = input("Enter the device for the root partition (e.g., /dev/sda2): ").strip()
+        root_fstype = input("Filesystem type for root (e.g., ext4): ").strip()
+        run_cmd(f"umount -lf {root_part}", check=False)
+        run_cmd(f"mkfs.{root_fstype} {root_part}")
+        run_cmd(f"mount {root_part} /mnt")
 
     # Ask for EFI partition if UEFI
     uefi = detect_uefi()
@@ -727,8 +734,14 @@ def main():
             root_for_crypt = root_part
     else:
         manual_partition_disk(disk)
+        # In manual mode, ask if user already set up LUKS before formatting/mounting
+        luks_root_ready = input("Did you already set up LUKS and open the encrypted root device? [y/N]: ").strip().lower() == 'y'
+        if luks_root_ready:
+            root_for_crypt = input("Enter the device path for the opened encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
+        else:
+            root_for_crypt = None
         format_and_mount_manual()
-        if luks:
+        if luks and not luks_root_ready:
             print(f"\n{Style.OKCYAN}You must now set up LUKS on your root partition manually.{Style.ENDC}")
             print(f"For example: cryptsetup luksFormat /dev/sdXY\nThen: cryptsetup open /dev/sdXY cryptroot")
             input("Press Enter once you have created and opened the encrypted root device...")
