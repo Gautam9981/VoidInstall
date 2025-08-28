@@ -316,27 +316,52 @@ def manual_partition_disk(disk):
 def format_and_mount_manual():
     print(f"\n{Style.HEADER}{Style.BOLD}List partitions:{Style.ENDC}")
     run_cmd("lsblk -o NAME,SIZE,TYPE,MOUNTPOINT")
-    partitions = []
+
+    # Ask for root partition first (required)
+    root_part = input("Enter the device for the root partition (e.g., /dev/sda2): ").strip()
+    root_fstype = input("Filesystem type for root (e.g., ext4): ").strip()
+    run_cmd(f"mkfs.{root_fstype} {root_part}")
+    run_cmd(f"mount {root_part} /mnt")
+
+    # Ask for EFI partition if UEFI
+    uefi = detect_uefi()
+    efi_part = None
+    if uefi:
+        efi_part = input("Enter the device for the EFI partition (e.g., /dev/sda1, leave blank if not needed): ").strip()
+        if efi_part:
+            run_cmd(f"mkfs.vfat -F32 {efi_part}")
+            run_cmd(f"mkdir -p /mnt/boot/efi")
+            run_cmd(f"mount {efi_part} /mnt/boot/efi")
+
+    # Ask for /boot partition if LUKS or user wants it
+    luks = False
+    luks_choice = input("Did you set up LUKS encryption for root? [y/N]: ").strip().lower()
+    if luks_choice == "y":
+        luks = True
+    boot_part = None
+    if luks or input("Do you have a separate /boot partition? [y/N]: ").strip().lower() == "y":
+        boot_part = input("Enter the device for the /boot partition (e.g., /dev/sda3): ").strip()
+        boot_fstype = input("Filesystem type for /boot (e.g., ext4): ").strip()
+        run_cmd(f"mkfs.{boot_fstype} {boot_part}")
+        run_cmd(f"mkdir -p /mnt/boot")
+        run_cmd(f"mount {boot_part} /mnt/boot")
+
+    # Ask for swap partition
+    swap_part = input("Enter the device for the swap partition (leave blank if none): ").strip()
+    if swap_part:
+        run_cmd(f"mkswap {swap_part}")
+        run_cmd(f"swapon {swap_part}")
+
+    # Ask for any additional partitions (e.g., /home)
     while True:
-        part = input("Enter partition device (e.g., /dev/sda1, blank to finish): ")
+        part = input("Enter another partition device (blank to finish): ").strip()
         if not part:
             break
-        mnt = input("Mount point (e.g., /, /home, swap, /boot/efi): ")
-        fstype = input("Filesystem type (ext4, vfat, swap, etc.): ")
-        if fstype == "swap":
-            run_cmd(f"mkswap {part}")
-            run_cmd(f"swapon {part}")
-        else:
-            run_cmd(f"mkfs.{fstype} {part}")
-            if mnt != "swap":
-                partitions.append((part, mnt))
-    # Mount all partitions
-    for part, mnt in partitions:
-        if mnt == "/":
-            run_cmd(f"mount {part} /mnt")
-        else:
-            run_cmd(f"mkdir -p /mnt{mnt}")
-            run_cmd(f"mount {part} /mnt{mnt}")
+        mnt = input("Mount point (e.g., /home): ").strip()
+        fstype = input("Filesystem type (ext4, xfs, etc.): ").strip()
+        run_cmd(f"mkfs.{fstype} {part}")
+        run_cmd(f"mkdir -p /mnt{mnt}")
+        run_cmd(f"mount {part} /mnt{mnt}")
     return
 
 def setup_mirrors():
@@ -730,11 +755,13 @@ def main():
             f.write('add_dracutmodules+=" crypt "\n')
         # Regenerate initramfs
         run_cmd("chroot /mnt xbps-reconfigure -fa")
-        # Update GRUB config for cryptdevice (but do not run grub-mkconfig yet)
+        # Update GRUB config for cryptdevice and regenerate grub.cfg
         grub_cfg = "/mnt/etc/default/grub"
         if os.path.exists(grub_cfg):
             with open(grub_cfg, "a") as f:
                 f.write(f"\nGRUB_CMDLINE_LINUX=\"cryptdevice=UUID={root_uuid}:{luks_name} root=/dev/mapper/{luks_name}\"\n")
+            # Regenerate grub.cfg to include new kernel parameters
+            run_cmd("chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
 
     create_user()
     install_desktop_and_sound()
