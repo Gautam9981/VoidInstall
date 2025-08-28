@@ -593,10 +593,9 @@ def main():
             print("Aborting.")
             sys.exit(0)
         unmount_disk_partitions(disk)
-        # Only zap partitions if not luks, otherwise just create new partitions
-        if not luks:
-            run_cmd(f"wipefs -a {disk}")
-            run_cmd(f"sgdisk -Z {disk}")
+        # Always zap the partition table before creating new partitions (prevents sgdisk errors)
+        run_cmd(f"wipefs -a {disk}")
+        run_cmd(f"sgdisk -Z {disk}")
         # Always create partitions (overwrites partition table)
         if uefi:
             run_cmd(f"sgdisk -n 1:0:+512M -t 1:ef00 {disk}")  # EFI
