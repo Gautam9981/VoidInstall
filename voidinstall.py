@@ -98,9 +98,9 @@ def mount_chroot_dirs():
     run_cmd("mkdir -p /mnt/dev /mnt/dev/pts /mnt/proc /mnt/sys /mnt/run", check=True)
     run_cmd("mount --bind /dev /mnt/dev")
     run_cmd("mount --bind /dev/pts /mnt/dev/pts")
-    run_cmd("mount -t proc none /mnt/proc")
-    run_cmd("mount -t sysfs none /mnt/sys")
-    run_cmd("mount -t tmpfs tmpfs /mnt/run")
+    run_cmd("mount --bind /proc /mnt/proc")
+    run_cmd("mount --bind /sys /mnt/sys")
+    run_cmd("mount --bind /run /mnt/run")
 
 def umount_chroot_dirs():
     print(f"{Style.OKBLUE}Unmounting chroot directories...{Style.ENDC}")
