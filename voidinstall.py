@@ -26,6 +26,7 @@ REQUIRED_DEPS = [
     "coreutils",       # for basic commands
     "procps-ng",       # for process management
     "which",           # for command checking
+    "cryptsetup",      # for LUKS encryption
 ]
 
 def check_dependencies():
