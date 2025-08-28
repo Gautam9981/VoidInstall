@@ -666,9 +666,14 @@ def main():
                 run_cmd(f"mkfs.ext4 {boot_part}")
             else:
                 run_cmd(f"mkfs.ext4 {boot_part}")
-            print(f"{Style.OKCYAN}Setting up LUKS encryption on {root_part}...{Style.ENDC}")
-            run_cmd(f"cryptsetup luksFormat {root_part}")
-            run_cmd(f"cryptsetup open {root_part} {luks_name}")
+            print(f"{Style.OKCYAN}Auto-partitioning complete. Please confirm the root partition to encrypt with LUKS.{Style.ENDC}")
+            print(f"Default root partition: {root_part}")
+            user_root_part = input(f"Enter the device to encrypt with LUKS (default: {root_part}): ").strip()
+            if not user_root_part:
+                user_root_part = root_part
+            print(f"{Style.OKCYAN}Setting up LUKS encryption on {user_root_part}...{Style.ENDC}")
+            run_cmd(f"cryptsetup luksFormat {user_root_part}")
+            run_cmd(f"cryptsetup open {user_root_part} {luks_name}")
             luks_root = f"/dev/mapper/{luks_name}"
             if lvm:
                 print(f"{Style.OKCYAN}Setting up LVM inside LUKS...{Style.ENDC}")
@@ -724,7 +729,9 @@ def main():
         manual_partition_disk(disk)
         format_and_mount_manual()
         if luks:
-            # Prompt for the mapped device after user sets up LUKS manually
+            print(f"\n{Style.OKCYAN}You must now set up LUKS on your root partition manually.{Style.ENDC}")
+            print(f"For example: cryptsetup luksFormat /dev/sdXY\nThen: cryptsetup open /dev/sdXY cryptroot")
+            input("Press Enter once you have created and opened the encrypted root device...")
             root_for_crypt = input("Enter the device path for the encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
 
     # Mount chroot dirs before any installation
