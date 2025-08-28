@@ -240,16 +240,17 @@ def select_disk():
 
 def auto_partition_disk(disk, uefi, use_swap, swap_size):
     print(f"\n{Style.WARNING}{Style.BOLD}Auto-partitioning {disk} (this will erase all data on the disk!){Style.ENDC}")
+    print(f"\n{Style.WARNING}NOTE: If you are using LUKS encryption, it is recommended to create a separate /boot partition (ext4, 512M-1G) for GRUB to work reliably.\n{Style.ENDC}")
     if uefi:
         if use_swap:
-            print(f"UEFI detected: Will create EFI (512M, type ef00), root (ext4), and swap ({swap_size}) partitions.")
+            print(f"UEFI detected: Will create EFI (512M, type ef00), /boot (1G, ext4, type 8300), root (ext4, encrypted), and swap ({swap_size}) partitions.")
         else:
-            print("UEFI detected: Will create EFI (512M, type ef00) and root (ext4) partitions. No swap.")
+            print("UEFI detected: Will create EFI (512M, type ef00), /boot (1G, ext4, type 8300), and root (ext4, encrypted) partitions. No swap.")
     else:
         if use_swap:
-            print(f"Legacy BIOS detected: Will create root (ext4) and swap ({swap_size}) partitions.")
+            print(f"Legacy BIOS detected: Will create /boot (1G, ext4, type 8300), root (ext4, encrypted), and swap ({swap_size}) partitions.")
         else:
-            print("Legacy BIOS detected: Will create root (ext4) partition. No swap.")
+            print("Legacy BIOS detected: Will create /boot (1G, ext4, type 8300) and root (ext4, encrypted) partitions. No swap.")
     confirm = input("Type 'YES' to continue: ")
     if confirm != 'YES':
         print("Aborting.")
@@ -259,17 +260,19 @@ def auto_partition_disk(disk, uefi, use_swap, swap_size):
     run_cmd(f"sgdisk -Z {disk}")
     if uefi:
         run_cmd(f"sgdisk -n 1:0:+512M -t 1:ef00 {disk}")  # EFI
+        run_cmd(f"sgdisk -n 2:0:+1G -t 2:8300 {disk}")    # /boot
         if use_swap:
-            run_cmd(f"sgdisk -n 2:0:+20G -t 2:8300 {disk}")    # root
+            run_cmd(f"sgdisk -n 3:0:+20G -t 3:8300 {disk}")    # root (encrypted)
+            run_cmd(f"sgdisk -n 4:0:+{swap_size} -t 4:8200 {disk}")  # swap
+        else:
+            run_cmd(f"sgdisk -n 3:0:0 -t 3:8300 {disk}")    # root (rest of disk, encrypted)
+    else:
+        run_cmd(f"sgdisk -n 1:0:+1G -t 1:8300 {disk}")    # /boot
+        if use_swap:
+            run_cmd(f"sgdisk -n 2:0:+20G -t 2:8300 {disk}")    # root (encrypted)
             run_cmd(f"sgdisk -n 3:0:+{swap_size} -t 3:8200 {disk}")  # swap
         else:
-            run_cmd(f"sgdisk -n 2:0:0 -t 2:8300 {disk}")    # root (rest of disk)
-    else:
-        if use_swap:
-            run_cmd(f"sgdisk -n 1:0:+20G -t 1:8300 {disk}")    # root
-            run_cmd(f"sgdisk -n 2:0:+{swap_size} -t 2:8200 {disk}")  # swap
-        else:
-            run_cmd(f"sgdisk -n 1:0:0 -t 1:8300 {disk}")    # root (rest of disk)
+            run_cmd(f"sgdisk -n 2:0:0 -t 2:8300 {disk}")    # root (rest of disk, encrypted)
     run_cmd(f"partprobe {disk}")
     print(f"{Style.OKGREEN}Partitions created:{Style.ENDC}")
     run_cmd(f"lsblk {disk}")
@@ -277,32 +280,36 @@ def auto_partition_disk(disk, uefi, use_swap, swap_size):
 def format_auto_partitions(disk, uefi, use_swap, skip_root_format=False):
     if uefi:
         efi = f"{disk}1"
-        root = f"{disk}2"
+        boot = f"{disk}2"
+        root = f"{disk}3"
         run_cmd(f"mkfs.vfat -F32 {efi}")
-        if not skip_root_format:
-            run_cmd(f"mkfs.ext4 {root}")
+        run_cmd(f"mkfs.ext4 {boot}")
         run_cmd(f"mount {root} /mnt")
+        run_cmd(f"mkdir -p /mnt/boot")
+        run_cmd(f"mount {boot} /mnt/boot")
         run_cmd(f"mkdir -p /mnt/boot/efi")
         run_cmd(f"mount {efi} /mnt/boot/efi")
         if use_swap:
-            swap = f"{disk}3"
+            swap = f"{disk}4"
             run_cmd(f"mkswap {swap}")
             run_cmd(f"swapon {swap}")
         return root
     else:
-        root = f"{disk}1"
-        if not skip_root_format:
-            run_cmd(f"mkfs.ext4 {root}")
+        boot = f"{disk}1"
+        root = f"{disk}2"
+        run_cmd(f"mkfs.ext4 {boot}")
         run_cmd(f"mount {root} /mnt")
+        run_cmd(f"mkdir -p /mnt/boot")
+        run_cmd(f"mount {boot} /mnt/boot")
         if use_swap:
-            swap = f"{disk}2"
+            swap = f"{disk}3"
             run_cmd(f"mkswap {swap}")
             run_cmd(f"swapon {swap}")
         return root
 
 def manual_partition_disk(disk):
     print(f"\n{Style.WARNING}{Style.BOLD}Manual partitioning for {disk}.{Style.ENDC}")
-    print(f"{Style.OKCYAN}You will be dropped into cfdisk. Create partitions as needed (root, swap, home, EFI, etc.).{Style.ENDC}")
+    print(f"{Style.OKCYAN}You will be dropped into cfdisk.\nIf you are using LUKS encryption, it is recommended to create a separate /boot partition (ext4, 512M-1G) for GRUB to work reliably.\nCreate partitions as needed (root, swap, home, EFI, etc.).{Style.ENDC}")
     input("Press Enter to continue...")
     run_cmd(f"cfdisk {disk}")
 
