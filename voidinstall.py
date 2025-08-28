@@ -788,13 +788,18 @@ def main():
     install_hardware_packages()
     verify_hardware_installation()
 
+    create_user()
+    install_desktop_and_sound()
+    install_bootloader(disk)
+
+    # Always update crypttab and regenerate initramfs if LUKS is used
     if luks and root_for_crypt:
         print(f"{Style.OKCYAN}Configuring crypttab, fstab, and initramfs for LUKS...{Style.ENDC}")
-        # crypttab
         root_uuid = subprocess.check_output(f"blkid -s UUID -o value {root_for_crypt}", shell=True, text=True).strip()
+        # Write/update crypttab
         with open("/mnt/etc/crypttab", "w") as f:
             f.write(f"{luks_name} UUID={root_uuid} none luks,discard\n")
-        # fstab (ensure root is /dev/mapper/cryptroot)
+        # Update fstab for root
         with open("/mnt/etc/fstab", "r") as f:
             lines = f.readlines()
         with open("/mnt/etc/fstab", "w") as f:
@@ -804,7 +809,7 @@ def main():
                 else:
                     f.write(line)
         # Ensure cryptsetup is installed in the target system for initramfs
-        run_cmd("xbps-install -Sy -y -R {} -r /mnt cryptsetup".format(VOID_MIRROR))
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt cryptsetup")
         # Ensure dracut includes crypt module
         run_cmd("mkdir -p /mnt/etc/dracut.conf.d", check=False)
         with open("/mnt/etc/dracut.conf.d/10-crypt.conf", "w") as f:
@@ -816,12 +821,7 @@ def main():
         if os.path.exists(grub_cfg):
             with open(grub_cfg, "a") as f:
                 f.write(f"\nGRUB_CMDLINE_LINUX=\"cryptdevice=UUID={root_uuid}:{luks_name} root=/dev/mapper/{luks_name}\"\n")
-            # Regenerate grub.cfg to include new kernel parameters
             run_cmd("chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
-
-    create_user()
-    install_desktop_and_sound()
-    install_bootloader(disk)
 
     print(f"\n{Style.OKGREEN}{Style.BOLD}Installation steps complete! System is ready to reboot.{Style.ENDC}")
 
