@@ -562,19 +562,14 @@ def install_bootloader(disk):
         # UEFI: install grub-x86_64-efi and efibootmgr
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
 
-        # Check if /mnt/boot/efi is mounted
-        efi_mounted = False
-        try:
-            with open("/proc/mounts", "r") as f:
-                for line in f:
-                    if "/mnt/boot/efi" in line:
-                        efi_mounted = True
-                        break
-        except Exception:
-            pass
+        # Always (re)mount /mnt/boot/efi after chroot dirs are mounted
+        efi_part = None
+        # Check if /mnt/boot/efi is a mount point
+        def is_mountpoint(path):
+            return os.path.ismount(path)
 
-        if not efi_mounted:
-            print(f"{Style.WARNING}/mnt/boot/efi is not mounted!{Style.ENDC}")
+        if not is_mountpoint("/mnt/boot/efi"):
+            print(f"{Style.WARNING}/mnt/boot/efi is not a mount point!{Style.ENDC}")
             efi_part = input("Enter EFI partition to mount at /mnt/boot/efi (e.g., /dev/sda1): ").strip()
             if efi_part:
                 run_cmd(f"mkdir -p /mnt/boot/efi")
@@ -584,7 +579,14 @@ def install_bootloader(disk):
                 umount_chroot_dirs()
                 return
         else:
-            print(f"{Style.OKGREEN}/mnt/boot/efi is already mounted.{Style.ENDC}")
+            print(f"{Style.OKGREEN}/mnt/boot/efi is already a mount point.{Style.ENDC}")
+
+        # Double-check inside chroot: /boot/efi must be a mount point
+        result = subprocess.run("chroot /mnt mountpoint -q /boot/efi", shell=True)
+        if result.returncode != 0:
+            print(f"{Style.FAIL}/boot/efi is NOT a mount point inside chroot! Aborting GRUB install.{Style.ENDC}")
+            umount_chroot_dirs()
+            return
 
         # Try to install GRUB with efibootmgr first
         print(f"{Style.OKCYAN}Attempting GRUB installation with efibootmgr...{Style.ENDC}")
