@@ -273,12 +273,13 @@ def auto_partition_disk(disk, uefi, use_swap, swap_size):
     print(f"{Style.OKGREEN}Partitions created:{Style.ENDC}")
     run_cmd(f"lsblk {disk}")
 
-def format_auto_partitions(disk, uefi, use_swap):
+def format_auto_partitions(disk, uefi, use_swap, skip_root_format=False):
     if uefi:
         efi = f"{disk}1"
         root = f"{disk}2"
         run_cmd(f"mkfs.vfat -F32 {efi}")
-        run_cmd(f"mkfs.ext4 {root}")
+        if not skip_root_format:
+            run_cmd(f"mkfs.ext4 {root}")
         run_cmd(f"mount {root} /mnt")
         run_cmd(f"mkdir -p /mnt/boot/efi")
         run_cmd(f"mount {efi} /mnt/boot/efi")
@@ -289,7 +290,8 @@ def format_auto_partitions(disk, uefi, use_swap):
         return root
     else:
         root = f"{disk}1"
-        run_cmd(f"mkfs.ext4 {root}")
+        if not skip_root_format:
+            run_cmd(f"mkfs.ext4 {root}")
         run_cmd(f"mount {root} /mnt")
         if use_swap:
             swap = f"{disk}2"
@@ -416,7 +418,13 @@ def install_hardware_packages():
 def create_user():
     print(f"\n{Style.HEADER}{Style.BOLD}User creation:{Style.ENDC}")
     username = input("Enter username: ")
-    password = getpass.getpass("Enter password: ")
+    while True:
+        password = getpass.getpass("Enter password: ")
+        password_confirm = getpass.getpass("Confirm password: ")
+        if password == password_confirm:
+            break
+        else:
+            print(f"{Style.FAIL}Passwords do not match. Please try again.{Style.ENDC}")
     mount_chroot_dirs()
     run_cmd(f"useradd -m -G wheel,audio,video -s /bin/bash {username}", chroot=True)
     run_cmd(f"echo '{username}:{password}' | chpasswd", chroot=True)
@@ -607,7 +615,7 @@ def main():
                 run_cmd(f"mount {efi} /mnt/boot/efi")
         else:
             # No encryption, format and mount as usual
-            root = format_auto_partitions(disk, uefi, use_swap)
+            root = format_auto_partitions(disk, uefi, use_swap, skip_root_format=luks)
     else:
         manual_partition_disk(disk)
         format_and_mount_manual()
@@ -623,7 +631,6 @@ def main():
     install_hardware_packages()
     verify_hardware_installation()
 
-    # If LUKS was used, update crypttab, fstab, regenerate initramfs, and update GRUB config (but do NOT run grub-mkconfig here)
     if luks and root_for_crypt:
         print(f"{Style.OKCYAN}Configuring crypttab, fstab, and initramfs for LUKS...{Style.ENDC}")
         # crypttab
