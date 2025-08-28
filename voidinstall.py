@@ -616,7 +616,7 @@ def main():
                 run_cmd(f"mount {efi} /mnt/boot/efi")
         else:
             # No encryption, format and mount as usual
-            root = format_auto_partitions(disk, uefi, use_swap, skip_root_format=luks)
+            root = format_auto_partitions(disk, uefi, use_swap, skip_root_format=False)
     else:
         manual_partition_disk(disk)
         format_and_mount_manual()
