@@ -98,9 +98,9 @@ def mount_chroot_dirs():
     run_cmd("mkdir -p /mnt/dev /mnt/dev/pts /mnt/proc /mnt/sys /mnt/run", check=True)
     run_cmd("mount --bind /dev /mnt/dev")
     run_cmd("mount --bind /dev/pts /mnt/dev/pts")
-    run_cmd("mount --bind /proc /mnt/proc")
-    run_cmd("mount --bind /sys /mnt/sys")
-    run_cmd("mount --bind /run /mnt/run")
+    run_cmd("mount -t proc none /mnt/proc")
+    run_cmd("mount -t sysfs none /mnt/sys")
+    run_cmd("mount -t tmpfs tmpfs /mnt/run")
 
 def umount_chroot_dirs():
     print(f"{Style.OKBLUE}Unmounting chroot directories...{Style.ENDC}")
@@ -663,6 +663,8 @@ def main():
     mount_chroot_dirs()
 
     install_base()
+    # Always install cryptsetup in chroot so it's available for dracut/initramfs and rescue
+    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt cryptsetup")
     setup_mirrors()
     install_hardware_packages()
     verify_hardware_installation()
@@ -684,6 +686,10 @@ def main():
                     f.write(line)
         # Ensure cryptsetup is installed in the target system for initramfs
         run_cmd("xbps-install -Sy -y -R {} -r /mnt cryptsetup".format(VOID_MIRROR))
+        # Ensure dracut includes crypt module
+        run_cmd("mkdir -p /mnt/etc/dracut.conf.d", check=False)
+        with open("/mnt/etc/dracut.conf.d/10-crypt.conf", "w") as f:
+            f.write('add_dracutmodules+=" crypt "\n')
         # Regenerate initramfs
         run_cmd("chroot /mnt xbps-reconfigure -fa")
         # Update GRUB config for cryptdevice (but do not run grub-mkconfig yet)
