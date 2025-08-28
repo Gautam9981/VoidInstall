@@ -557,20 +557,39 @@ def install_bootloader(disk):
     print("\nInstalling GRUB bootloader...")
     uefi = detect_uefi()
     mount_chroot_dirs()
-    
+
     if uefi:
         # UEFI: install grub-x86_64-efi and efibootmgr
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
-        efi_part = input("Enter EFI partition (e.g., /dev/sda1, or leave blank if already mounted): ")
-        if efi_part:
-            run_cmd(f"mkdir -p /mnt/boot/efi")
-            run_cmd(f"mount {efi_part} /mnt/boot/efi")
-        
+
+        # Check if /mnt/boot/efi is mounted
+        efi_mounted = False
+        try:
+            with open("/proc/mounts", "r") as f:
+                for line in f:
+                    if "/mnt/boot/efi" in line:
+                        efi_mounted = True
+                        break
+        except Exception:
+            pass
+
+        if not efi_mounted:
+            print(f"{Style.WARNING}/mnt/boot/efi is not mounted!{Style.ENDC}")
+            efi_part = input("Enter EFI partition to mount at /mnt/boot/efi (e.g., /dev/sda1): ").strip()
+            if efi_part:
+                run_cmd(f"mkdir -p /mnt/boot/efi")
+                run_cmd(f"mount {efi_part} /mnt/boot/efi")
+            else:
+                print(f"{Style.FAIL}EFI partition is required for UEFI boot. Aborting GRUB install.{Style.ENDC}")
+                umount_chroot_dirs()
+                return
+        else:
+            print(f"{Style.OKGREEN}/mnt/boot/efi is already mounted.{Style.ENDC}")
+
         # Try to install GRUB with efibootmgr first
         print(f"{Style.OKCYAN}Attempting GRUB installation with efibootmgr...{Style.ENDC}")
-        result = subprocess.run(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck", 
-                              shell=True)
-        
+        result = subprocess.run(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck", shell=True)
+
         if result.returncode != 0:
             print(f"{Style.WARNING}efibootmgr failed (EFI variables not writable). Trying fallback installation...{Style.ENDC}")
             # Fallback: install without efibootmgr (removable media path)
@@ -582,7 +601,7 @@ def install_bootloader(disk):
         # Legacy BIOS: install grub
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
         run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
-    
+
     # Generate GRUB configuration
     run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
     print(f"{Style.OKGREEN}GRUB installation and configuration complete.{Style.ENDC}")
