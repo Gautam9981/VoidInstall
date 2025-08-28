@@ -647,6 +647,8 @@ def main():
                     f.write(f"/dev/mapper/{luks_name} / ext4 defaults 0 1\n")
                 else:
                     f.write(line)
+        # Ensure cryptsetup is installed in the target system for initramfs
+        run_cmd("xbps-install -Sy -y -R {} -r /mnt cryptsetup".format(VOID_MIRROR))
         # Regenerate initramfs
         run_cmd("chroot /mnt xbps-reconfigure -fa")
         # Update GRUB config for cryptdevice (but do not run grub-mkconfig yet)
