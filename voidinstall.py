@@ -318,10 +318,21 @@ def format_and_mount_manual():
     run_cmd("lsblk -o NAME,SIZE,TYPE,MOUNTPOINT")
 
 
-    # Ask if user already set up LUKS for root
-    luks_root_ready = input("Did you already set up LUKS and open the encrypted root device? [y/N]: ").strip().lower() == 'y'
-    if luks_root_ready:
-        root_part = input("Enter the device path for the opened encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
+    # Accept luks_root_ready and root_part as arguments to avoid duplicate prompts
+    import inspect
+    frame = inspect.currentframe()
+    luks_root_ready = False
+    root_part = None
+    if frame is not None and frame.f_back is not None:
+        luks_root_ready = frame.f_back.f_locals.get('luks_root_ready', False)
+        root_part = frame.f_back.f_locals.get('root_for_crypt', None)
+    if luks_root_ready and root_part:
+        # Ask if filesystem exists, offer to create if not
+        fs_check = subprocess.run(f"blkid -o value -s TYPE {root_part}", shell=True, capture_output=True, text=True)
+        if fs_check.returncode != 0 or not fs_check.stdout.strip():
+            print(f"{Style.WARNING}No filesystem detected on {root_part}.{Style.ENDC}")
+            if input(f"Do you want to create an ext4 filesystem on {root_part}? [y/N]: ").strip().lower() == 'y':
+                run_cmd(f"mkfs.ext4 {root_part}")
         run_cmd(f"mount {root_part} /mnt")
     else:
         # Ask for root partition first (required)
@@ -734,12 +745,11 @@ def main():
             root_for_crypt = root_part
     else:
         manual_partition_disk(disk)
-        # In manual mode, ask if user already set up LUKS before formatting/mounting
+        # In manual mode, ask if user already set up LUKS before formatting/mounting (only once)
         luks_root_ready = input("Did you already set up LUKS and open the encrypted root device? [y/N]: ").strip().lower() == 'y'
+        root_for_crypt = None
         if luks_root_ready:
             root_for_crypt = input("Enter the device path for the opened encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
-        else:
-            root_for_crypt = None
         format_and_mount_manual()
         if luks and not luks_root_ready:
             print(f"\n{Style.OKCYAN}You must now set up LUKS on your root partition manually.{Style.ENDC}")
