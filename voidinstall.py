@@ -591,44 +591,51 @@ def main():
 
         # Partitioning logic: always create partitions, but only wipe/format as needed
         print(f"\n{Style.WARNING}{Style.BOLD}Auto-partitioning {disk} (this will erase all data on the disk!){Style.ENDC}")
-        if uefi:
-            print("UEFI detected: Will create EFI (512M, type ef00), root (8300), and optional swap partitions.")
-        else:
-            print("Legacy BIOS detected: Will create root (8300) and optional swap partitions.")
-        confirm = input("Type 'YES' to continue: ")
-        if confirm != 'YES':
-            print("Aborting.")
-            sys.exit(0)
+        if luks:
+            print(f"{Style.WARNING}LUKS selected: Will create a separate /boot partition (ext4, 1G) for GRUB, and encrypted root.\n{Style.ENDC}")
         unmount_disk_partitions(disk)
-        # Always zap the partition table before creating new partitions (prevents sgdisk errors)
         run_cmd(f"wipefs -a {disk}")
         run_cmd(f"sgdisk -Z {disk}")
-        # Always create partitions (overwrites partition table)
+        # Partition creation
         if uefi:
             run_cmd(f"sgdisk -n 1:0:+512M -t 1:ef00 {disk}")  # EFI
+            run_cmd(f"sgdisk -n 2:0:+1G -t 2:8300 {disk}")    # /boot
+            if use_swap:
+                run_cmd(f"sgdisk -n 3:0:+20G -t 3:8300 {disk}")    # root
+                run_cmd(f"sgdisk -n 4:0:+{swap_size} -t 4:8200 {disk}")  # swap
+            else:
+                run_cmd(f"sgdisk -n 3:0:0 -t 3:8300 {disk}")    # root (rest of disk)
+        else:
+            run_cmd(f"sgdisk -n 1:0:+1G -t 1:8300 {disk}")    # /boot
             if use_swap:
                 run_cmd(f"sgdisk -n 2:0:+20G -t 2:8300 {disk}")    # root
                 run_cmd(f"sgdisk -n 3:0:+{swap_size} -t 3:8200 {disk}")  # swap
             else:
                 run_cmd(f"sgdisk -n 2:0:0 -t 2:8300 {disk}")    # root (rest of disk)
-        else:
-            if use_swap:
-                run_cmd(f"sgdisk -n 1:0:+20G -t 1:8300 {disk}")    # root
-                run_cmd(f"sgdisk -n 2:0:+{swap_size} -t 2:8200 {disk}")  # swap
-            else:
-                run_cmd(f"sgdisk -n 1:0:0 -t 1:8300 {disk}")    # root (rest of disk)
         run_cmd(f"partprobe {disk}")
         print(f"{Style.OKGREEN}Partitions created:{Style.ENDC}")
         run_cmd(f"lsblk {disk}")
 
-        root_part = f"{disk}2" if uefi else f"{disk}1"
-        efi_part = f"{disk}1" if uefi else None
-        swap_part = f"{disk}3" if (uefi and use_swap) else (f"{disk}2" if (not uefi and use_swap) else None)
+        # Assign partition variables
+        efi_part = None
+        if uefi:
+            efi_part = f"{disk}1"
+            boot_part = f"{disk}2"
+            root_part = f"{disk}3"
+            swap_part = f"{disk}4" if use_swap else None
+        else:
+            boot_part = f"{disk}1"
+            root_part = f"{disk}2"
+            swap_part = f"{disk}3" if use_swap else None
 
+        # LUKS setup
         if luks:
-            # Only format EFI partition before LUKS, do NOT format root partition
+            # Format EFI and /boot, but NOT root before LUKS
             if uefi:
                 run_cmd(f"mkfs.vfat -F32 {efi_part}")
+                run_cmd(f"mkfs.ext4 {boot_part}")
+            else:
+                run_cmd(f"mkfs.ext4 {boot_part}")
             print(f"{Style.OKCYAN}Setting up LUKS encryption on {root_part}...{Style.ENDC}")
             run_cmd(f"cryptsetup luksFormat {root_part}")
             run_cmd(f"cryptsetup open {root_part} {luks_name}")
@@ -653,12 +660,36 @@ def main():
                     run_cmd(f"mkswap {swap_part}")
                     run_cmd(f"swapon {swap_part}")
                 root_for_crypt = luks_root
+            # Mount /boot and EFI
+            run_cmd(f"mkdir -p /mnt/boot")
+            run_cmd(f"mount {boot_part} /mnt/boot")
             if uefi:
                 run_cmd(f"mkdir -p /mnt/boot/efi")
                 run_cmd(f"mount {efi_part} /mnt/boot/efi")
         else:
-            # No encryption, format and mount as usual
-            root = format_auto_partitions(disk, uefi, use_swap, skip_root_format=False)
+            # Non-LUKS: format and mount all partitions
+            if uefi:
+                run_cmd(f"mkfs.vfat -F32 {efi_part}")
+                run_cmd(f"mkfs.ext4 {boot_part}")
+                run_cmd(f"mkfs.ext4 {root_part}")
+                run_cmd(f"mount {root_part} /mnt")
+                run_cmd(f"mkdir -p /mnt/boot")
+                run_cmd(f"mount {boot_part} /mnt/boot")
+                run_cmd(f"mkdir -p /mnt/boot/efi")
+                run_cmd(f"mount {efi_part} /mnt/boot/efi")
+                if use_swap and swap_part:
+                    run_cmd(f"mkswap {swap_part}")
+                    run_cmd(f"swapon {swap_part}")
+            else:
+                run_cmd(f"mkfs.ext4 {boot_part}")
+                run_cmd(f"mkfs.ext4 {root_part}")
+                run_cmd(f"mount {root_part} /mnt")
+                run_cmd(f"mkdir -p /mnt/boot")
+                run_cmd(f"mount {boot_part} /mnt/boot")
+                if use_swap and swap_part:
+                    run_cmd(f"mkswap {swap_part}")
+                    run_cmd(f"swapon {swap_part}")
+            root_for_crypt = root_part
     else:
         manual_partition_disk(disk)
         format_and_mount_manual()
