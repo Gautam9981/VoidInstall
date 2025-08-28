@@ -482,6 +482,11 @@ def create_user():
         else:
             print(f"{Style.FAIL}Passwords do not match. Please try again.{Style.ENDC}")
     mount_chroot_dirs()
+    # Check if user exists in chroot, and remove if so
+    user_exists = subprocess.run(f"chroot /mnt id -u {username}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if user_exists.returncode == 0:
+        print(f"{Style.WARNING}User {username} already exists. Removing...{Style.ENDC}")
+        run_cmd(f"userdel -r {username}", chroot=True)
     run_cmd(f"useradd -m -G wheel,audio,video -s /bin/bash {username}", chroot=True)
     run_cmd(f"echo '{username}:{password}' | chpasswd", chroot=True)
     # Add sudo
