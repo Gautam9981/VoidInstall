@@ -803,16 +803,42 @@ def main():
         root_uuid = subprocess.check_output(f"blkid -s UUID -o value {root_for_crypt}", shell=True, text=True).strip()
         # Write/update crypttab
         with open("/mnt/etc/crypttab", "w") as f:
-            f.write(f"{luks_name} UUID={root_uuid} none luks,discard\n")
-        # Update fstab for root
-        with open("/mnt/etc/fstab", "r") as f:
-            lines = f.readlines()
+            f.write(f"{luks_name} UUID={root_uuid} none luks\n")
+
+        # Compose fstab entries
+        fstab_entries = []
+        # Always add root
+        fstab_entries.append(f"/dev/mapper/{luks_name} / ext4 defaults 0 1\n")
+        # Add /boot if mounted
+        boot_dev = None
+        try:
+            boot_dev = subprocess.check_output("findmnt -n -o SOURCE /mnt/boot", shell=True, text=True).strip()
+        except subprocess.CalledProcessError:
+            pass
+        if boot_dev:
+            fstab_entries.append(f"{boot_dev} /boot ext4 defaults 0 2\n")
+        # Add /boot/efi if mounted
+        efi_dev = None
+        try:
+            efi_dev = subprocess.check_output("findmnt -n -o SOURCE /mnt/boot/efi", shell=True, text=True).strip()
+        except subprocess.CalledProcessError:
+            pass
+        if efi_dev:
+            fstab_entries.append(f"{efi_dev} /boot/efi vfat umask=0077 0 2\n")
+        # Add swap if enabled
+        try:
+            swaps = subprocess.check_output("swapon --show=NAME --noheadings", shell=True, text=True).strip().splitlines()
+            for swap in swaps:
+                if swap:
+                    fstab_entries.append(f"{swap} none swap defaults 0 0\n")
+        except subprocess.CalledProcessError:
+            pass
+
+        # Write fstab (overwrite)
         with open("/mnt/etc/fstab", "w") as f:
-            for line in lines:
-                if "/mnt" in line or root_for_crypt in line:
-                    f.write(f"/dev/mapper/{luks_name} / ext4 defaults 0 1\n")
-                else:
-                    f.write(line)
+            for entry in fstab_entries:
+                f.write(entry)
+
         # Ensure cryptsetup is installed in the target system for initramfs
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt cryptsetup")
         # Ensure dracut includes crypt module
