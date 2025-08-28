@@ -320,6 +320,7 @@ def format_and_mount_manual():
     # Ask for root partition first (required)
     root_part = input("Enter the device for the root partition (e.g., /dev/sda2): ").strip()
     root_fstype = input("Filesystem type for root (e.g., ext4): ").strip()
+    run_cmd(f"umount -lf {root_part}", check=False)
     run_cmd(f"mkfs.{root_fstype} {root_part}")
     run_cmd(f"mount {root_part} /mnt")
 
@@ -329,6 +330,7 @@ def format_and_mount_manual():
     if uefi:
         efi_part = input("Enter the device for the EFI partition (e.g., /dev/sda1, leave blank if not needed): ").strip()
         if efi_part:
+            run_cmd(f"umount -lf {efi_part}", check=False)
             run_cmd(f"mkfs.vfat -F32 {efi_part}")
             run_cmd(f"mkdir -p /mnt/boot/efi")
             run_cmd(f"mount {efi_part} /mnt/boot/efi")
@@ -342,6 +344,7 @@ def format_and_mount_manual():
     if luks or input("Do you have a separate /boot partition? [y/N]: ").strip().lower() == "y":
         boot_part = input("Enter the device for the /boot partition (e.g., /dev/sda3): ").strip()
         boot_fstype = input("Filesystem type for /boot (e.g., ext4): ").strip()
+        run_cmd(f"umount -lf {boot_part}", check=False)
         run_cmd(f"mkfs.{boot_fstype} {boot_part}")
         run_cmd(f"mkdir -p /mnt/boot")
         run_cmd(f"mount {boot_part} /mnt/boot")
@@ -349,6 +352,7 @@ def format_and_mount_manual():
     # Ask for swap partition
     swap_part = input("Enter the device for the swap partition (leave blank if none): ").strip()
     if swap_part:
+        run_cmd(f"swapoff {swap_part}", check=False)
         run_cmd(f"mkswap {swap_part}")
         run_cmd(f"swapon {swap_part}")
 
@@ -359,6 +363,7 @@ def format_and_mount_manual():
             break
         mnt = input("Mount point (e.g., /home): ").strip()
         fstype = input("Filesystem type (ext4, xfs, etc.): ").strip()
+        run_cmd(f"umount -lf {part}", check=False)
         run_cmd(f"mkfs.{fstype} {part}")
         run_cmd(f"mkdir -p /mnt{mnt}")
         run_cmd(f"mount {part} /mnt{mnt}")
