@@ -40,4 +40,6 @@ The script will check for and install any missing dependencies automatically.
 - If you encounter issues, check the output for error messages and ensure you are running from a Void Linux live environment.
 
 ## Disclaimer
-Before you use this, please read this disclaimer: If you use LUKS Encryption with LVM and do automatic formatting, the script will automatically format the root as ext4, however, with setting up encryption, you will have to format that partition again (using luksFormat to create the encrypted partitioning scheme , and then ext4 for the /dev/mapper/cryptroot (basically a reference to the encrypted partition scheme)
+Before you use this, please read this disclaimer(s): 
+- If you use LUKS Encryption with LVM and do automatic formatting, the script will automatically format the root as ext4, however, with setting up encryption, you will have to format that partition again (using luksFormat to create the encrypted partitioning scheme , and then ext4 for the /dev/mapper/cryptroot (basically a reference to the encrypted partition scheme)
+- If you choose to setup encrypted, follow the instructions in the script, which basically state that leave the script using CTRL + C and then follow the commands it specifies, and then come back to it and run it again
