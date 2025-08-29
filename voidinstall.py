@@ -7,7 +7,7 @@ import os
 import shutil
 
 VOID_MIRROR = "https://repo-default.voidlinux.org/current"
-BASE_PKGS = "base-system"
+BASE_PKGS = "base-system xorg"
 DESKTOP_ENVIRONMENTS = {
     "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter",
     "gnome": "gnome gdm",
@@ -644,18 +644,18 @@ def main():
 
     use_swap = False
     swap_size = ""
-    luks = False
-    lvm = False
-    luks_name = "cryptroot"
-    root_for_crypt = None
+    # luks = False
+    # lvm = False
+    # luks_name = "cryptroot"
+    # root_for_crypt = None
 
     # Prompt for LUKS and LVM before partitioning
-    luks_choice = input("Encrypt root partition with LUKS? [y/N]: ").strip().lower()
-    if luks_choice == "y":
-        luks = True
-        lvm_choice = input("Use LVM inside LUKS? [y/N]: ").strip().lower()
-        if lvm_choice == "y":
-            lvm = True
+    # luks_choice = input("Encrypt root partition with LUKS? [y/N]: ").strip().lower()
+    # if luks_choice == "y":
+    #     luks = True
+    #     lvm_choice = input("Use LVM inside LUKS? [y/N]: ").strip().lower()
+    #     if lvm_choice == "y":
+    #         lvm = True
 
     if mode == "a":
         swap_choice = input("Create a swap partition? [y/N]: ").strip().lower()
@@ -665,8 +665,6 @@ def main():
 
         # Partitioning logic: always create partitions, but only wipe/format as needed
         print(f"\n{Style.WARNING}{Style.BOLD}Auto-partitioning {disk} (this will erase all data on the disk!){Style.ENDC}")
-        if luks:
-            print(f"{Style.WARNING}LUKS selected: Will create a separate /boot partition (ext4, 1G) for GRUB, and encrypted root.\n{Style.ENDC}")
         unmount_disk_partitions(disk)
         run_cmd(f"wipefs -a {disk}")
         run_cmd(f"sgdisk -Z {disk}")
@@ -702,93 +700,37 @@ def main():
             root_part = f"{disk}2"
             swap_part = f"{disk}3" if use_swap else None
 
-        # LUKS setup
-        if luks:
-            # Format EFI and /boot, but NOT root before LUKS
-            if uefi:
-                run_cmd(f"mkfs.vfat -F32 {efi_part}")
-                run_cmd(f"mkfs.ext4 {boot_part}")
-            else:
-                run_cmd(f"mkfs.ext4 {boot_part}")
-            print(f"{Style.OKCYAN}Auto-partitioning complete. Please confirm the root partition to encrypt with LUKS.{Style.ENDC}")
-            print(f"Default root partition: {root_part}")
-            user_root_part = input(f"Enter the device to encrypt with LUKS (default: {root_part}): ").strip()
-            if not user_root_part:
-                user_root_part = root_part
-            print(f"{Style.OKCYAN}Setting up LUKS encryption on {user_root_part}...{Style.ENDC}")
-            run_cmd(f"cryptsetup luksFormat {user_root_part}")
-            run_cmd(f"cryptsetup open {user_root_part} {luks_name}")
-            luks_root = f"/dev/mapper/{luks_name}"
-            if lvm:
-                print(f"{Style.OKCYAN}Setting up LVM inside LUKS...{Style.ENDC}")
-                run_cmd(f"pvcreate {luks_root}")
-                run_cmd(f"vgcreate vg0 {luks_root}")
-                run_cmd(f"lvcreate -L 18G -n root vg0")
-                if use_swap:
-                    run_cmd(f"lvcreate -L {swap_size} -n swap vg0")
-                run_cmd(f"mkfs.ext4 /dev/vg0/root")
-                run_cmd(f"mount /dev/vg0/root /mnt")
-                if use_swap:
-                    run_cmd(f"mkswap /dev/vg0/swap")
-                    run_cmd(f"swapon /dev/vg0/swap")
-                root_for_crypt = "/dev/vg0/root"
-            else:
-                run_cmd(f"mkfs.ext4 {luks_root}")
-                run_cmd(f"mount {luks_root} /mnt")
-                if use_swap and swap_part:
-                    run_cmd(f"mkswap {swap_part}")
-                    run_cmd(f"swapon {swap_part}")
-                root_for_crypt = luks_root
-            # Mount /boot and EFI
+        # Format and mount all partitions (no encryption)
+        if uefi:
+            run_cmd(f"mkfs.vfat -F32 {efi_part}")
+            run_cmd(f"mkfs.ext4 {boot_part}")
+            run_cmd(f"mkfs.ext4 {root_part}")
+            run_cmd(f"mount {root_part} /mnt")
             run_cmd(f"mkdir -p /mnt/boot")
             run_cmd(f"mount {boot_part} /mnt/boot")
-            if uefi:
-                run_cmd(f"mkdir -p /mnt/boot/efi")
-                run_cmd(f"mount {efi_part} /mnt/boot/efi")
+            run_cmd(f"mkdir -p /mnt/boot/efi")
+            run_cmd(f"mount {efi_part} /mnt/boot/efi")
+            if use_swap and swap_part:
+                run_cmd(f"mkswap {swap_part}")
+                run_cmd(f"swapon {swap_part}")
         else:
-            # Non-LUKS: format and mount all partitions
-            if uefi:
-                run_cmd(f"mkfs.vfat -F32 {efi_part}")
-                run_cmd(f"mkfs.ext4 {boot_part}")
-                run_cmd(f"mkfs.ext4 {root_part}")
-                run_cmd(f"mount {root_part} /mnt")
-                run_cmd(f"mkdir -p /mnt/boot")
-                run_cmd(f"mount {boot_part} /mnt/boot")
-                run_cmd(f"mkdir -p /mnt/boot/efi")
-                run_cmd(f"mount {efi_part} /mnt/boot/efi")
-                if use_swap and swap_part:
-                    run_cmd(f"mkswap {swap_part}")
-                    run_cmd(f"swapon {swap_part}")
-            else:
-                run_cmd(f"mkfs.ext4 {boot_part}")
-                run_cmd(f"mkfs.ext4 {root_part}")
-                run_cmd(f"mount {root_part} /mnt")
-                run_cmd(f"mkdir -p /mnt/boot")
-                run_cmd(f"mount {boot_part} /mnt/boot")
-                if use_swap and swap_part:
-                    run_cmd(f"mkswap {swap_part}")
-                    run_cmd(f"swapon {swap_part}")
-            root_for_crypt = root_part
+            run_cmd(f"mkfs.ext4 {boot_part}")
+            run_cmd(f"mkfs.ext4 {root_part}")
+            run_cmd(f"mount {root_part} /mnt")
+            run_cmd(f"mkdir -p /mnt/boot")
+            run_cmd(f"mount {boot_part} /mnt/boot")
+            if use_swap and swap_part:
+                run_cmd(f"mkswap {swap_part}")
+                run_cmd(f"swapon {swap_part}")
     else:
         manual_partition_disk(disk)
-        # In manual mode, ask if user already set up LUKS before formatting/mounting (only once)
-        luks_root_ready = input("Did you already set up LUKS and open the encrypted root device? [y/N]: ").strip().lower() == 'y'
-        root_for_crypt = None
-        if luks_root_ready:
-            root_for_crypt = input("Enter the device path for the opened encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
         format_and_mount_manual()
-        if luks and not luks_root_ready:
-            print(f"\n{Style.OKCYAN}You must now set up LUKS on your root partition manually.{Style.ENDC}")
-            print(f"For example: cryptsetup luksFormat /dev/sdXY\nThen: cryptsetup open /dev/sdXY cryptroot")
-            input("Press Enter once you have created and opened the encrypted root device...")
-            root_for_crypt = input("Enter the device path for the encrypted root (e.g., /dev/mapper/cryptroot): ").strip()
 
+    # Mount chroot dirs before any installation
     # Mount chroot dirs before any installation
     mount_chroot_dirs()
 
     install_base()
-    # Always install cryptsetup in chroot so it's available for dracut/initramfs and rescue
-    run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt cryptsetup")
     setup_mirrors()
     install_hardware_packages()
     verify_hardware_installation()
@@ -796,81 +738,6 @@ def main():
     create_user()
     install_desktop_and_sound()
     install_bootloader(disk)
-
-
-    # Always update crypttab and regenerate initramfs if LUKS is used (no LVM case)
-    if luks and root_for_crypt and not lvm:
-        print(f"{Style.OKCYAN}Configuring crypttab, fstab, and initramfs for LUKS (no LVM)...{Style.ENDC}")
-        # Find the underlying encrypted partition (not the /dev/mapper)
-        # If root_for_crypt is /dev/mapper/cryptroot, find the backing device
-        backing_part = None
-        if root_for_crypt.startswith("/dev/mapper/"):
-            # Try to find the backing device by looking for a cryptsetup mapping
-            # Use lsblk to find the parent
-            try:
-                out = subprocess.check_output(f"lsblk -no PKNAME {root_for_crypt}", shell=True, text=True).strip()
-                if out:
-                    backing_part = f"/dev/{out}"
-            except Exception:
-                pass
-        if not backing_part:
-            # Fallback: ask user
-            backing_part = input("Enter the device you encrypted with LUKS (e.g., /dev/sda3): ").strip()
-        # Get UUID of backing partition
-        root_uuid = subprocess.check_output(f"blkid -s UUID -o value {backing_part}", shell=True, text=True).strip()
-        # Write /etc/crypttab
-        with open("/mnt/etc/crypttab", "w") as f:
-            f.write(f"cryptroot UUID={root_uuid} none luks\n")
-        # Write /etc/fstab
-        fstab_entries = []
-        fstab_entries.append("/dev/mapper/cryptroot / ext4 defaults 0 1\n")
-        # Add /boot if mounted
-        boot_dev = None
-        try:
-            boot_dev = subprocess.check_output("findmnt -n -o SOURCE /mnt/boot", shell=True, text=True).strip()
-        except subprocess.CalledProcessError:
-            pass
-        if boot_dev:
-            fstab_entries.append(f"{boot_dev} /boot ext4 defaults 0 2\n")
-        # Add /boot/efi if mounted
-        efi_dev = None
-        try:
-            efi_dev = subprocess.check_output("findmnt -n -o SOURCE /mnt/boot/efi", shell=True, text=True).strip()
-        except subprocess.CalledProcessError:
-            pass
-        if efi_dev:
-            fstab_entries.append(f"{efi_dev} /boot/efi vfat umask=0077 0 2\n")
-        # Add swap if enabled
-        try:
-            swaps = subprocess.check_output("swapon --show=NAME --noheadings", shell=True, text=True).strip().splitlines()
-            for swap in swaps:
-                if swap:
-                    fstab_entries.append(f"{swap} none swap defaults 0 0\n")
-        except subprocess.CalledProcessError:
-            pass
-        with open("/mnt/etc/fstab", "w") as f:
-            for entry in fstab_entries:
-                f.write(entry)
-        # Ensure cryptsetup is installed in the target system for initramfs
-        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt cryptsetup")
-        # Ensure dracut includes crypt module
-        run_cmd("mkdir -p /mnt/etc/dracut.conf.d", check=False)
-        with open("/mnt/etc/dracut.conf.d/10-crypt.conf", "w") as f:
-            f.write('add_dracutmodules+=" crypt "\n')
-        # Regenerate initramfs
-        run_cmd("chroot /mnt xbps-reconfigure -fa")
-        # Update GRUB config for cryptdevice and regenerate grub.cfg
-        grub_cfg = "/mnt/etc/default/grub"
-        if os.path.exists(grub_cfg):
-            # Remove any previous GRUB_CMDLINE_LINUX lines
-            with open(grub_cfg, "r") as f:
-                lines = f.readlines()
-            with open(grub_cfg, "w") as f:
-                for line in lines:
-                    if not line.strip().startswith("GRUB_CMDLINE_LINUX="):
-                        f.write(line)
-                f.write(f'GRUB_CMDLINE_LINUX="cryptdevice=UUID={root_uuid}:cryptroot root=/dev/mapper/cryptroot"\n')
-            run_cmd("chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
 
     print(f"\n{Style.OKGREEN}{Style.BOLD}Installation steps complete! System is ready to reboot.{Style.ENDC}")
 
