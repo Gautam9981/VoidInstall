@@ -9,9 +9,9 @@ import shutil
 VOID_MIRROR = "https://repo-default.voidlinux.org/current"
 BASE_PKGS = "base-system xorg"
 DESKTOP_ENVIRONMENTS = {
-    "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter",
-    "gnome": "gnome gdm",
-    "kde": "kde5 sddm",
+    "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter gvfs thunar-volman thunar-archive-plugin xfce4-pulseaudio-plugin network-manager-applet",
+    "gnome": "gnome gdm gnome-tweaks gnome-software gvfs network-manager-applet",
+    "kde": "kde5 sddm plasma-workspace plasma-desktop kdeplasma-addons kde-cli-tools kde-gtk-config kdeconnect dolphin konsole ark sddm-kcm gvfs network-manager-applet",
     "none": ""
 }
 
@@ -454,15 +454,15 @@ def install_hardware_packages():
         hardware_pkgs_str = " ".join(hardware_pkgs)
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {hardware_pkgs_str}")
         
-        # Enable hardware-specific services
+        # Enable hardware-specific services using runit
         if "NetworkManager" in hardware_pkgs:
-            run_cmd("ln -sf /etc/sv/NetworkManager /mnt/etc/runit/runsvdir/default/", check=False)
+            run_cmd("ln -sf /etc/sv/NetworkManager /mnt/var/service", check=False)
             print(f"{Style.OKGREEN}NetworkManager service enabled.{Style.ENDC}")
-        
+
         if "bluez" in hardware_pkgs:
-            run_cmd("ln -sf /etc/sv/bluetoothd /mnt/etc/runit/runsvdir/default/", check=False)
+            run_cmd("ln -sf /etc/sv/bluetoothd /mnt/var/service", check=False)
             print(f"{Style.OKGREEN}Bluetooth service enabled.{Style.ENDC}")
-        
+
         # Handle NVIDIA-specific setup
         if "nvidia" in hardware_pkgs:
             print(f"{Style.WARNING}NVIDIA drivers installed. Blacklisting nouveau driver.{Style.ENDC}")
@@ -508,26 +508,28 @@ def install_desktop_and_sound():
         de_key = "none"
     pkgs = DESKTOP_ENVIRONMENTS[de_key]
     # Sound packages (ALSA, Pulse, PipeWire)
-    sound_pkgs = "alsa-utils pulseaudio pavucontrol pipewire wireplumber sof-firmware"
+    sound_pkgs = "alsa-utils pipewire wireplumber sof-firmware"
     
     if pkgs:
         print(f"{Style.OKCYAN}Installing {de_key} and sound packages...{Style.ENDC}")
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {pkgs} {sound_pkgs}")
-        # Enable display manager
+        # Enable display manager using runit
         if de_key == "xfce":
-            run_cmd("ln -sf /etc/sv/lightdm /var/service", check=False)
+            run_cmd("ln -sf /etc/sv/lightdm /mnt/var/service", check=False)
         elif de_key == "gnome":
-            run_cmd("ln -sf /etc/sv/gdm /var/service", check=False)
+            run_cmd("ln -sf /etc/sv/gdm /mnt/var/service", check=False)
         elif de_key == "kde":
-            run_cmd("ln -sf /etc/sv/sddm /var/service", check=False)
+            run_cmd("ln -sf /etc/sv/sddm /mnt/var/service", check=False)
+            # SDDM setup: ensure sddm.conf exists
+            run_cmd("chroot /mnt mkdir -p /etc/sddm.conf.d", check=False)
+            run_cmd('chroot /mnt bash -c "echo -e \'[Autologin]\\nUser=\\nSession=plasma.desktop\' > /etc/sddm.conf.d/autologin.conf"', check=False)
     else:
         print(f"{Style.WARNING}No desktop environment will be installed. Installing sound packages only...{Style.ENDC}")
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt {sound_pkgs}")
-    
-    # Enable sound services
-    run_cmd("ln -sf /etc/sv/dbus /var/service", check=False)
-    run_cmd("ln -sf /etc/sv/pipewire /var/service", check=False)
-    run_cmd("ln -sf /etc/sv/pulseaudio /var/service", check=False)
+
+    # Enable sound services using runit
+    run_cmd("ln -sf /etc/sv/dbus /mnt/var/service", check=False)
+    run_cmd("ln -sf /etc/sv/pipewire /mnt/var/service", check=False)
     print(f"{Style.OKGREEN}Desktop and sound setup complete.{Style.ENDC}")
 
 def verify_hardware_installation():
