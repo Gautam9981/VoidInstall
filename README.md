@@ -18,7 +18,7 @@ VoidInstall is a modern, interactive, and user-friendly installer for Void Linux
 1. **Boot into a Void Linux live environment** (with internet access).
 2. **Run as root:**
    ```bash
-      python 3voidinstall.py
+      python3 voidinstall.py
    ```
 3. **Follow the prompts** for disk selection, partitioning, user setup, desktop, etc.
 
