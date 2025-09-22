@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+import shlex
+
+# --- Modular, robust installer inspired by Le0xFF/VoidLinuxInstaller ---
+
 # --- Modular Installer Inspired by archinstall ---
 import subprocess
 import sys
@@ -89,9 +92,14 @@ def run_cmd(cmd, check=True, chroot=False):
         cmd = f"chroot /mnt /bin/bash -c '{cmd}'"
     print(f"\n{Style.OKBLUE}[RUNNING]{Style.ENDC} {cmd}")
     result = subprocess.run(cmd, shell=True)
-    if check and result.returncode != 0:
-        print(f"[ERROR] Command failed: {cmd}")
-        sys.exit(1)
+    if result.returncode != 0:
+        print(f"{Style.FAIL}[ERROR] Command failed: {cmd}{Style.ENDC}")
+        if check:
+            print(f"{Style.WARNING}Please check your input, disk state, or network connection and try again.{Style.ENDC}")
+            input("Press Enter to exit...")
+            sys.exit(1)
+        else:
+            print(f"{Style.WARNING}Continuing despite the error (check=False).{Style.ENDC}")
 
 def mount_chroot_dirs():
     print(f"{Style.OKBLUE}Mounting chroot directories...{Style.ENDC}")
@@ -569,14 +577,10 @@ def install_bootloader(disk):
         # UEFI: install grub-x86_64-efi and efibootmgr
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
 
-        # Always (re)mount /mnt/boot/efi after chroot dirs are mounted
-        efi_part = None
         # Check if /mnt/boot/efi is a mount point
-        def is_mountpoint(path):
-            return os.path.ismount(path)
-
-        if not is_mountpoint("/mnt/boot/efi"):
-            print(f"{Style.WARNING}/mnt/boot/efi is not a mount point!{Style.ENDC}")
+        if not os.path.ismount("/mnt/boot/efi"):
+            print(f"{Style.FAIL}/mnt/boot/efi is NOT a mount point!{Style.ENDC}")
+            print(f"{Style.WARNING}You MUST mount your EFI partition at /mnt/boot/efi before installing GRUB!{Style.ENDC}")
             efi_part = input("Enter EFI partition to mount at /mnt/boot/efi (e.g., /dev/sda1): ").strip()
             if efi_part:
                 run_cmd(f"mkdir -p /mnt/boot/efi")
@@ -587,6 +591,14 @@ def install_bootloader(disk):
                 return
         else:
             print(f"{Style.OKGREEN}/mnt/boot/efi is already a mount point.{Style.ENDC}")
+
+        # Double-check filesystem type
+        blkid_out = subprocess.run("lsblk -no FSTYPE /mnt/boot/efi", shell=True, capture_output=True, text=True)
+        if "vfat" not in blkid_out.stdout:
+            print(f"{Style.FAIL}/mnt/boot/efi is not FAT32!{Style.ENDC}")
+            print(f"{Style.WARNING}EFI partition must be FAT32 (vfat). Aborting GRUB install.{Style.ENDC}")
+            umount_chroot_dirs()
+            return
 
         # Double-check inside chroot: /boot/efi must be a mount point
         result = subprocess.run("chroot /mnt mountpoint -q /boot/efi", shell=True)
@@ -606,6 +618,10 @@ def install_bootloader(disk):
             print(f"{Style.OKGREEN}GRUB installed in removable media mode (should work even without EFI variables).{Style.ENDC}")
         else:
             print(f"{Style.OKGREEN}GRUB installed successfully with efibootmgr.{Style.ENDC}")
+
+        # Print efibootmgr output for user to verify boot entries
+        print(f"{Style.OKCYAN}efibootmgr output (inside chroot):{Style.ENDC}")
+        subprocess.run("chroot /mnt efibootmgr -v", shell=True)
     else:
         # Legacy BIOS: install grub
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
@@ -614,7 +630,38 @@ def install_bootloader(disk):
     # Generate GRUB configuration
     run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
     print(f"{Style.OKGREEN}GRUB installation and configuration complete.{Style.ENDC}")
+    print(f"{Style.WARNING}After installation, make sure to set your firmware/BIOS/UEFI boot order to boot from the installed disk, and remove the installation media (CD/DVD/USB) before rebooting!{Style.ENDC}")
     umount_chroot_dirs()
+
+# --- Advanced chroot configuration and bootloader install ---
+def chroot_and_configure():
+    print("\nEntering chroot configuration...")
+    run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf")
+    run_cmd("chroot /mnt passwd")
+    tz = input("Enter timezone (e.g., Europe/London): ")
+    run_cmd(f"chroot /mnt ln -sf /usr/share/zoneinfo/{tz} /etc/localtime")
+    run_cmd("chroot /mnt hwclock --systohc")
+    locale = input("Enter locale (e.g., en_US.UTF-8): ")
+    run_cmd(f"chroot /mnt sed -i 's/^#\\s*{locale}/{locale}/' /etc/default/libc-locales")
+    run_cmd(f"chroot /mnt xbps-reconfigure -f glibc-locales")
+    hostname = input("Enter hostname: ")
+    run_cmd(f"chroot /mnt hostnamectl set-hostname {hostname}")
+    username = input("Enter username to create: ")
+    run_cmd(f"chroot /mnt useradd -m -G wheel,audio,video -s /bin/bash {username}")
+    run_cmd(f"chroot /mnt passwd {username}")
+    run_cmd(f"chroot /mnt xbps-install -Sy sudo NetworkManager")
+    run_cmd(f"chroot /mnt ln -sf /etc/sv/NetworkManager /var/service")
+    run_cmd(f"chroot /mnt ln -sf /etc/sv/dbus /var/service")
+
+def install_bootloader_modular(disk, uefi):
+    if uefi:
+        run_cmd(f"chroot /mnt xbps-install -Sy grub-x86_64-efi efibootmgr")
+        run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck")
+    else:
+        run_cmd(f"chroot /mnt xbps-install -Sy grub")
+        run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
+    run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
+    print("Bootloader installation complete. Remove install media and reboot.")
 
 def main():
     print(f"{Style.BOLD}{Style.OKGREEN}=== Void Linux Interactive Installer ==={Style.ENDC}")
@@ -736,11 +783,9 @@ def main():
     setup_mirrors()
     install_hardware_packages()
     verify_hardware_installation()
-
-    create_user()
+    chroot_and_configure()
     install_desktop_and_sound()
-    install_bootloader(disk)
-
+    install_bootloader_modular(disk, uefi)
     print(f"\n{Style.OKGREEN}{Style.BOLD}Installation steps complete! System is ready to reboot.{Style.ENDC}")
 
 if __name__ == "__main__":
