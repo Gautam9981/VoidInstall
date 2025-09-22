@@ -645,7 +645,7 @@ def chroot_and_configure():
     run_cmd(f"chroot /mnt sed -i 's/^#\\s*{locale}/{locale}/' /etc/default/libc-locales")
     run_cmd(f"chroot /mnt xbps-reconfigure -f glibc-locales")
     hostname = input("Enter hostname: ")
-    run_cmd(f"chroot /mnt hostnamectl set-hostname {hostname}")
+    run_cmd(f"echo '{hostname}' > /mnt/etc/hostname")
     username = input("Enter username to create: ")
     run_cmd(f"chroot /mnt useradd -m -G wheel,audio,video -s /bin/bash {username}")
     run_cmd(f"chroot /mnt passwd {username}")
