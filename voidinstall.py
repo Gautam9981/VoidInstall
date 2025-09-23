@@ -789,4 +789,8 @@ def main():
     print(f"\n{Style.OKGREEN}{Style.BOLD}Installation steps complete! System is ready to reboot.{Style.ENDC}")
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     main()
+=======
+    main()
+>>>>>>> e830f0c02f027be964e453e6172226dea96a9ff6
