@@ -752,11 +752,8 @@ def main():
         # Format and mount all partitions (no encryption)
         if uefi:
             run_cmd(f"mkfs.vfat -F32 {efi_part}")
-            run_cmd(f"mkfs.ext4 {boot_part}")
             run_cmd(f"mkfs.ext4 {root_part}")
             run_cmd(f"mount {root_part} /mnt")
-            run_cmd(f"mkdir -p /mnt/boot")
-            run_cmd(f"mount {boot_part} /mnt/boot")
             run_cmd(f"mkdir -p /mnt/boot/efi")
             run_cmd(f"mount {efi_part} /mnt/boot/efi")
             if use_swap and swap_part:
