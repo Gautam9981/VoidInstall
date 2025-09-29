@@ -752,7 +752,6 @@ def main():
         # Format and mount all partitions (no encryption)
         if uefi:
             run_cmd(f"mkfs.vfat -F32 {efi_part}")
-            run_cmd(f"mkfs.ext4 {boot_part}")
             run_cmd(f"mkfs.ext4 {root_part}")
             run_cmd(f"mount {root_part} /mnt")
             run_cmd(f"mkdir -p /mnt/boot")
@@ -789,8 +788,4 @@ def main():
     print(f"\n{Style.OKGREEN}{Style.BOLD}Installation steps complete! System is ready to reboot.{Style.ENDC}")
 
 if __name__ == "__main__":
-<<<<<<< HEAD
     main()
-=======
-    main()
->>>>>>> e830f0c02f027be964e453e6172226dea96a9ff6
