@@ -109,9 +109,21 @@ def mount_chroot_dirs():
     run_cmd("mount -t proc none /mnt/proc")
     run_cmd("mount -t sysfs none /mnt/sys")
     run_cmd("mount -t tmpfs tmpfs /mnt/run")
+    # If the host has UEFI efivars, expose them inside chroot so efibootmgr works
+    try:
+        if os.path.exists("/sys/firmware/efi"):
+            # Ensure efivarfs is mounted on the host (safe to run even if already mounted)
+            run_cmd("mount -t efivarfs efivarfs /sys/firmware/efi/efivars", check=False)
+            run_cmd("mkdir -p /mnt/sys/firmware/efi", check=False)
+            run_cmd("mount --bind /sys/firmware/efi /mnt/sys/firmware/efi", check=False)
+    except Exception:
+        # Non-fatal: continue without efivars exposed
+        print(f"{Style.WARNING}Could not bind efivars into chroot; efibootmgr may not work.{Style.ENDC}")
 
 def umount_chroot_dirs():
     print(f"{Style.OKBLUE}Unmounting chroot directories...{Style.ENDC}")
+    # Unbind efivars/efi if we bound it earlier
+    run_cmd("umount -l /mnt/sys/firmware/efi", check=False)
     run_cmd("umount -l /mnt/dev/pts", check=False)
     run_cmd("umount -l /mnt/dev", check=False)
     run_cmd("umount -l /mnt/proc", check=False)
@@ -754,6 +766,8 @@ def main():
             run_cmd(f"mkfs.vfat -F32 {efi_part}")
             run_cmd(f"mkfs.ext4 {root_part}")
             run_cmd(f"mount {root_part} /mnt")
+            run_cmd(f"mkdir -p /mnt/boot")
+            run_cmd(f"mount {boot_part} /mnt/boot")
             run_cmd(f"mkdir -p /mnt/boot/efi")
             run_cmd(f"mount {efi_part} /mnt/boot/efi")
             if use_swap and swap_part:
