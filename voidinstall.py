@@ -587,7 +587,7 @@ def install_bootloader(disk):
 
     if uefi:
         # UEFI: install grub-x86_64-efi and efibootmgr
-        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr")
+        run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub-x86_64-efi efibootmgr", check=False)
 
         # Check if /mnt/boot/efi is a mount point
         if not os.path.ismount("/mnt/boot/efi"):
@@ -619,21 +619,28 @@ def install_bootloader(disk):
             umount_chroot_dirs()
             return
 
-        # Try to install GRUB with efibootmgr first
-        print(f"{Style.OKCYAN}Attempting GRUB installation with efibootmgr...{Style.ENDC}")
-        result = subprocess.run(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck", shell=True)
-
-        if result.returncode != 0:
-            print(f"{Style.WARNING}efibootmgr failed (EFI variables not writable). Trying fallback installation...{Style.ENDC}")
-            # Fallback: install without efibootmgr (removable media path)
+        # Check whether efivars are available inside chroot; if not, skip efibootmgr
+        efivars_available = (subprocess.run("chroot /mnt test -d /sys/firmware/efi/efivars", shell=True).returncode == 0)
+        if not efivars_available and not os.path.exists("/sys/firmware/efi/efivars"):
+            print(f"{Style.WARNING}EFI variables are not available on the host or inside chroot. Installing GRUB in removable mode (--removable).{Style.ENDC}")
             run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck")
             print(f"{Style.OKGREEN}GRUB installed in removable media mode (should work even without EFI variables).{Style.ENDC}")
         else:
-            print(f"{Style.OKGREEN}GRUB installed successfully with efibootmgr.{Style.ENDC}")
+            # Try to install GRUB with efibootmgr first (don't let run_cmd auto-exit — use subprocess)
+            print(f"{Style.OKCYAN}Attempting GRUB installation with efibootmgr...{Style.ENDC}")
+            result = subprocess.run(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck", shell=True)
 
-        # Print efibootmgr output for user to verify boot entries
-        print(f"{Style.OKCYAN}efibootmgr output (inside chroot):{Style.ENDC}")
-        subprocess.run("chroot /mnt efibootmgr -v", shell=True)
+            if result.returncode != 0:
+                print(f"{Style.WARNING}efibootmgr failed (EFI variables not writable). Trying fallback installation...{Style.ENDC}")
+                # Fallback: install without efibootmgr (removable media path)
+                run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck")
+                print(f"{Style.OKGREEN}GRUB installed in removable media mode (should work even without EFI variables).{Style.ENDC}")
+            else:
+                print(f"{Style.OKGREEN}GRUB installed successfully with efibootmgr.{Style.ENDC}")
+
+                # Print efibootmgr output for user to verify boot entries
+                print(f"{Style.OKCYAN}efibootmgr output (inside chroot):{Style.ENDC}")
+                subprocess.run("chroot /mnt efibootmgr -v", shell=True)
     else:
         # Legacy BIOS: install grub
         run_cmd(f"xbps-install -Sy -y -R {VOID_MIRROR} -r /mnt grub")
