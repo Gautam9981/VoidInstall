@@ -1,4 +1,5 @@
 import shlex
+import argparse
 
 # --- Modular, robust installer inspired by Le0xFF/VoidLinuxInstaller ---
 
@@ -673,13 +674,35 @@ def chroot_and_configure():
     run_cmd(f"chroot /mnt ln -sf /etc/sv/dbus /var/service")
 
 def install_bootloader_modular(disk, uefi):
+    # Note: caller may pass force_removable and vm_detect to control behavior
+    # Signature will be updated by caller.
     if uefi:
-        run_cmd(f"chroot /mnt xbps-install -Sy grub-x86_64-efi efibootmgr")
-        run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck")
+        run_cmd(f"chroot /mnt xbps-install -Sy grub-x86_64-efi efibootmgr", check=False)
+        # Decide whether to use removable mode automatically
+        use_removable = globals().get('FORCE_REMOVABLE', False) or globals().get('VM_DETECTED', False)
+
+        # Ensure /mnt/boot/efi exists
+        if not os.path.ismount('/mnt/boot/efi'):
+            print(f"{Style.WARNING}/mnt/boot/efi is not mounted. GRUB will attempt removable install if forced or VM detected.{Style.ENDC}")
+            # If we're forcing removable or VM, continue; otherwise ask user
+            if not use_removable:
+                efi_part = input("Enter EFI partition to mount at /mnt/boot/efi (e.g., /dev/sda1) or leave blank to force removable install: ").strip()
+                if efi_part:
+                    run_cmd("mkdir -p /mnt/boot/efi", check=False)
+                    run_cmd(f"mount {efi_part} /mnt/boot/efi", check=True)
+                else:
+                    use_removable = True
+
+        if use_removable:
+            print(f"{Style.OKCYAN}Installing GRUB in removable mode (--removable).{Style.ENDC}")
+            run_cmd(f"chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck", check=False)
+            run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg", check=False)
+            print(f"{Style.OKGREEN}GRUB installed in removable mode.{Style.ENDC}")
+            return
     else:
         run_cmd(f"chroot /mnt xbps-install -Sy grub")
         run_cmd(f"chroot /mnt grub-install --target=i386-pc {disk}")
-    run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg")
+    run_cmd(f"chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg", check=False)
     print("Bootloader installation complete. Remove install media and reboot.")
 
 def main():
