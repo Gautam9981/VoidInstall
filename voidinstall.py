@@ -253,7 +253,7 @@ def install_desktop_and_sound():
         de_key = "none"
 
     de_pkgs = DESKTOP_ENVIRONMENTS[de_key]
-    sound_pkgs = "alsa-utils pipewire wireplumber sof-firmware"
+    sound_pkgs = "alsa-utils pipewire wireplumber sof-firmware alsa-pipewire"
     
     if de_pkgs:
         print(f"{Style.OKCYAN}Installing {de_key} desktop and sound packages...{Style.ENDC}")
