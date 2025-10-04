@@ -11,11 +11,11 @@ import platform # --- ADDED ---
 # --- Configuration ---
 # --- MODIFIED ---: Base mirror URL, architecture will be appended.
 VOID_MIRROR_BASE = "https://repo-default.voidlinux.org/current"
-BASE_PKGS = "base-system xorg"
+BASE_PKGS = "base-system xorg NetworkManager"
 DESKTOP_ENVIRONMENTS = {
     "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter gvfs thunar-volman thunar-archive-plugin xfce4-pulseaudio-plugin network-manager-applet",
-    "gnome": "gnome gdm gnome-tweaks gnome-software gvfs network-manager-applet",
-    "kde": "kde5 sddm plasma-workspace plasma-desktop kdeplasma-addons kde-cli-tools kde-gtk-config kdeconnect dolphin konsole ark sddm-kcm gvfs network-manager-applet",
+    "gnome": "gnome gdm gnome-tweaks gnome-software gvfs network-manager-applet network-manager",
+    "kde": "kde5 sddm konsole plasma-workspace plasma-desktop kdeplasma-addons kde-cli-tools kde-gtk-config kdeconnect dolphin konsole ark sddm-kcm gvfs network-manager-applet",
     "none": ""
 }
 # --- Global variable for architecture --- ADDED ---
@@ -262,6 +262,68 @@ def install_desktop_and_sound():
         print(f"{Style.OKCYAN}Installing sound packages only...{Style.ENDC}")
         run_cmd(f"xbps-install -Sy -r /mnt {sound_pkgs}")
 
+
+def detect_and_install_graphics(is_vm=False):
+    """Detect graphics hardware and install appropriate drivers into the target (/mnt).
+    Skips heavy/proprietary installs when running inside virtual machines unless forced.
+    """
+    print(f"\n{Style.HEADER}{Style.BOLD}Detecting graphics hardware...{Style.ENDC}")
+
+    try:
+        result = subprocess.run("lspci -nnk | grep -iE 'vga|3d|display' -A2", shell=True, capture_output=True, text=True)
+        out = result.stdout.lower()
+    except Exception as e:
+        print(f"{Style.WARNING}Could not run lspci: {e}. Skipping graphics autodetection.{Style.ENDC}")
+        return
+
+    found = set()
+    if 'nvidia' in out:
+        found.add('nvidia')
+    if 'radeon' in out or 'amd' in out or 'advanced micro devices' in out:
+        found.add('amd')
+    if 'intel' in out and 'intel corporation' in out or 'intel' in out:
+        # catch many intel strings
+        found.add('intel')
+
+    if not found:
+        print(f"{Style.OKGREEN}No discrete graphics detected or only virtual graphics present.{Style.ENDC}")
+        return
+
+    print(f"{Style.OKCYAN}Detected graphics adapters: {', '.join(found)}{Style.ENDC}")
+
+    # For bare metal installs only: install vendor drivers into /mnt
+    if is_vm:
+        print(f"{Style.WARNING}Running in a VM - skipping proprietary or host-specific graphics driver installation by default.{Style.ENDC}")
+        print(f"If you want drivers installed anyway, re-run with --force-removable or install manually inside the target after first boot.{Style.ENDC}")
+        return
+
+    pkgs = []
+    # NVIDIA
+    if 'nvidia' in found:
+        print(f"{Style.OKCYAN}Preparing to install NVIDIA drivers (proprietary).{Style.ENDC}")
+        # Recommend non-free repository, but attempt install anyway
+        pkgs.extend(["nvidia", "nvidia-libs-32bit"])
+
+    # AMD
+    if 'amd' in found:
+        print(f"{Style.OKCYAN}Preparing to install AMD/Mesa drivers.{Style.ENDC}")
+        pkgs.extend(["mesa-dri", "mesa-vulkan-radeon", "mesa-vaapi", "mesa-vdpau"])
+
+    # Intel
+    if 'intel' in found:
+        print(f"{Style.OKCYAN}Preparing to install Intel Mesa drivers.{Style.ENDC}")
+        pkgs.extend(["mesa-dri", "mesa-vulkan-intel", "intel-media-driver"])
+
+    if not pkgs:
+        print(f"{Style.WARNING}No driver packages to install after detection.{Style.ENDC}")
+        return
+
+    pkgs = list(dict.fromkeys(pkgs))  # deduplicate while preserving order
+    pkg_str = ' '.join(pkgs)
+    print(f"{Style.OKCYAN}Installing graphics packages into target: {pkg_str}{Style.ENDC}")
+    run_cmd(f"xbps-install -Sy -r /mnt {pkg_str}")
+    print(f"{Style.OKGREEN}Graphics drivers installation requested. Reconfigure and test after first boot.{Style.ENDC}")
+
 def chroot_and_configure():
     """Performs system configuration inside the chroot."""
     print(f"\n{Style.HEADER}{Style.BOLD}Configuring the new system...{Style.ENDC}")
@@ -299,7 +361,6 @@ def chroot_and_configure():
     run_cmd(f"echo '{username}:{password}' | chpasswd", chroot=True)
 
     print(f"{Style.OKCYAN}Setting up sudo and enabling services...{Style.ENDC}")
-    run_cmd("xbps-install -Sy sudo NetworkManager", chroot=True)
     run_cmd(f"echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/wheel", chroot=True)
 
     # Enable essential services
@@ -440,6 +501,8 @@ def main():
     install_base_system()
     install_desktop_and_sound() # Call this before chroot config to enable correct services
     mount_chroot_dirs()
+    # Install graphics drivers on bare-metal only (skip in VMs)
+    detect_and_install_graphics(is_vm)
     chroot_and_configure()
     install_bootloader(disk, uefi, args.force_removable, is_vm)
     umount_chroot_dirs()
