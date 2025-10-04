@@ -253,6 +253,37 @@ def detect_uefi():
     except FileNotFoundError:
         return False
 
+
+def detect_vm():
+    """Heuristic detection for common VM environments."""
+    try:
+        # Check for hypervisor flag in cpuinfo
+        with open('/proc/cpuinfo', 'r') as f:
+            cpuinfo = f.read().lower()
+            if 'hypervisor' in cpuinfo:
+                return True
+    except Exception:
+        pass
+
+    # Check DMI strings
+    dmi_paths = [
+        '/sys/class/dmi/id/product_name',
+        '/sys/class/dmi/id/sys_vendor',
+        '/sys/class/dmi/id/board_vendor'
+    ]
+    vm_signatures = ['virtual', 'vmware', 'kvm', 'qemu', 'virtualbox', 'bochs', 'hyper-v', 'microsoft']
+    for p in dmi_paths:
+        try:
+            if os.path.exists(p):
+                with open(p, 'r') as f:
+                    txt = f.read().lower()
+                    for sig in vm_signatures:
+                        if sig in txt:
+                            return True
+        except Exception:
+            continue
+    return False
+
 def select_disk():
     print(f"\n{Style.HEADER}{Style.BOLD}Available disks:{Style.ENDC}")
     run_cmd("lsblk -d -o NAME,SIZE,MODEL")
@@ -722,6 +753,17 @@ def main():
         print(f"{Style.WARNING}Continuing without non-free repositories. Some hardware may not be fully supported.{Style.ENDC}")
     
     uefi = detect_uefi()
+    # Parse CLI args for force-removable option
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--force-removable', action='store_true', help='Force GRUB --removable installation (no efibootmgr)')
+    args, _ = parser.parse_known_args()
+
+    # Set globals used by install_bootloader_modular
+    global FORCE_REMOVABLE, VM_DETECTED
+    FORCE_REMOVABLE = bool(args.force_removable)
+    VM_DETECTED = detect_vm()
+    if VM_DETECTED:
+        print(f"{Style.WARNING}Virtual machine detected - installer will prefer removable GRUB installation when appropriate.{Style.ENDC}")
     if uefi:
         print(f"{Style.OKCYAN}System booted in UEFI mode.{Style.ENDC}")
         print(f"{Style.OKBLUE}For UEFI, you need an EFI partition (FAT32, 512M recommended) mounted at /boot/efi.{Style.ENDC}")
