@@ -161,6 +161,23 @@ def select_disk():
     disk = input("Enter the disk to install on (e.g., sda, nvme0n1): ").strip()
     return f"/dev/{disk}"
 
+
+# Helper to build partition device names correctly (handles nvme/mmcblk/loop)
+def part_path(disk, partnum):
+    """
+    Return partition device path for a given disk and partition number.
+    Examples:
+      /dev/sda  -> /dev/sda1
+      /dev/nvme0n1 -> /dev/nvme0n1p1
+      /dev/mmcblk0 -> /dev/mmcblk0p1
+      /dev/loop0 -> /dev/loop0p1
+    """
+    name = os.path.basename(disk)
+    # If device name ends with a digit (nvme0n1, mmcblk0, loop0), use 'p' before partition number
+    if name and name[-1].isdigit():
+        return f"{disk}p{partnum}"
+    return f"{disk}{partnum}"
+
 def manual_partition_and_mount(disk):
     """Guides user through manual partitioning and mounting."""
     print(f"\n{Style.WARNING}{Style.BOLD}Manual Partitioning Mode{Style.ENDC}")
@@ -337,6 +354,8 @@ def install_bootloader(disk, uefi, force_removable=False, is_vm=False):
         return # Skip grub-mkconfig
 
     print(f"{Style.OKCYAN}Generating GRUB configuration...{Style.ENDC}")
+    # Ensure grub directory exists inside chroot before generating config
+    run_cmd("mkdir -p /mnt/boot/grub", check=False)
     run_cmd("grub-mkconfig -o /boot/grub/grub.cfg", chroot=True)
     print(f"{Style.OKGREEN}Bootloader installation step complete.{Style.ENDC}")
 
@@ -383,13 +402,13 @@ def main():
                 swap_size = input("Enter swap size (e.g., 4G): ").strip()
                 run_cmd(f"sgdisk -n 2:0:+{swap_size} -t 2:8200 {disk}") # SWAP
                 run_cmd(f"sgdisk -n 3:0:0 -t 3:8300 {disk}") # ROOT
-                swap_part, root_part = f"{disk}2", f"{disk}3"
+                swap_part, root_part = part_path(disk, 2), part_path(disk, 3)
                 run_cmd(f"mkswap {swap_part}"); run_cmd(f"swapon {swap_part}")
             else:
                 run_cmd(f"sgdisk -n 2:0:0 -t 2:8300 {disk}") # ROOT
-                root_part = f"{disk}2"
+                root_part = part_path(disk, 2)
             
-            efi_part = f"{disk}1"
+            efi_part = part_path(disk, 1)
             run_cmd(f"mkfs.vfat -F32 {efi_part}")
             run_cmd(f"mkfs.ext4 {root_part}")
             run_cmd(f"mount {root_part} /mnt")
@@ -402,11 +421,11 @@ def main():
                 swap_size = input("Enter swap size (e.g., 4G): ").strip()
                 run_cmd(f"sgdisk -n 2:0:+{swap_size} -t 2:8200 {disk}") # SWAP
                 run_cmd(f"sgdisk -n 3:0:0 -t 3:8300 {disk}") # ROOT
-                swap_part, root_part = f"{disk}2", f"{disk}3"
+                swap_part, root_part = part_path(disk, 2), part_path(disk, 3)
                 run_cmd(f"mkswap {swap_part}"); run_cmd(f"swapon {swap_part}")
             else:
                 run_cmd(f"sgdisk -n 2:0:0 -t 2:8300 {disk}") # ROOT
-                root_part = f"{disk}2"
+                root_part = part_path(disk, 2)
             
             run_cmd(f"mkfs.ext4 {root_part}")
             run_cmd(f"mount {root_part} /mnt")
