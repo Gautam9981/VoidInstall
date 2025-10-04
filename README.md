@@ -1,6 +1,6 @@
 # VoidInstall: Interactive Void Linux Installer
 
-VoidInstall is a modern, interactive, and user-friendly installer for Void Linux, inspired by Archinstall. It automates disk partitioning, hardware detection, user setup, desktop environment installation, and more—all from a single script.
+VoidInstall is an interactive, and user-friendly installer for Void Linux, inspired by Archinstall. It automates disk partitioning, hardware detection, user setup, desktop environment installation, and more—all from a single script.
 
 ## Features
 - Auto/manual disk partitioning (UEFI & BIOS support)
