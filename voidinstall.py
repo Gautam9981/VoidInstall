@@ -6,9 +6,11 @@ import sys
 import getpass
 import os
 import shutil
+import platform # --- ADDED ---
 
 # --- Configuration ---
-VOID_MIRROR = "https://repo-default.voidlinux.org/current"
+# --- MODIFIED ---: Base mirror URL, architecture will be appended.
+VOID_MIRROR_BASE = "https://repo-default.voidlinux.org/current"
 BASE_PKGS = "base-system xorg"
 DESKTOP_ENVIRONMENTS = {
     "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter gvfs thunar-volman thunar-archive-plugin xfce4-pulseaudio-plugin network-manager-applet",
@@ -16,6 +18,8 @@ DESKTOP_ENVIRONMENTS = {
     "kde": "kde5 sddm plasma-workspace plasma-desktop kdeplasma-addons kde-cli-tools kde-gtk-config kdeconnect dolphin konsole ark sddm-kcm gvfs network-manager-applet",
     "none": ""
 }
+# --- Global variable for architecture --- ADDED ---
+ARCH = ""
 
 # --- ANSI Color/Style Codes ---
 class Style:
@@ -134,6 +138,21 @@ def detect_vm():
     except Exception: pass
     return False
 
+# --- ADDED ---: Detect machine architecture
+def detect_arch():
+    """Detects the system's architecture."""
+    # Use platform.machine() for a standard way to get arch
+    arch = platform.machine()
+    if arch == "x86_64":
+        return "x86_64"
+    elif arch == "aarch64":
+        return "aarch64"
+    elif "arm" in arch:
+        return "armv7l" # Default to armv7l for 32-bit arm
+    else:
+        print(f"{Style.FAIL}Unsupported architecture: {arch}. Exiting.{Style.ENDC}")
+        sys.exit(1)
+
 # --- Installation Steps ---
 def select_disk():
     """Prompts the user to select an installation disk."""
@@ -176,21 +195,32 @@ def manual_partition_and_mount(disk):
         run_cmd(f"mkswap {swap_part}")
         run_cmd(f"swapon {swap_part}")
 
+# --- MODIFIED ---: Function now uses global ARCH variable
 def setup_repos():
     """Sets up main and non-free repositories on the target system."""
-    print(f"{Style.OKCYAN}Setting up XBPS repositories...{Style.ENDC}")
+    global ARCH
+    print(f"{Style.OKCYAN}Setting up XBPS repositories for {ARCH}...{Style.ENDC}")
     run_cmd("mkdir -p /mnt/etc/xbps.d")
+    
+    repo_url = f"{VOID_MIRROR_BASE}/{ARCH}" if ARCH != "x86_64" else VOID_MIRROR_BASE
+    
     with open("/mnt/etc/xbps.d/00-repository-main.conf", "w") as f:
-        f.write(f"repository={VOID_MIRROR}\n")
+        f.write(f"repository={repo_url}\n")
     with open("/mnt/etc/xbps.d/10-repository-nonfree.conf", "w") as f:
-        f.write(f"repository={VOID_MIRROR}/nonfree\n")
-    with open("/mnt/etc/xbps.d/20-repository-multilib.conf", "w") as f:
-        f.write(f"repository={VOID_MIRROR}/multilib\n")
+        f.write(f"repository={repo_url}/nonfree\n")
+    
+    # Multilib is only for x86_64
+    if ARCH == "x86_64":
+        with open("/mnt/etc/xbps.d/20-repository-multilib.conf", "w") as f:
+            f.write(f"repository={repo_url}/multilib\n")
 
+# --- MODIFIED ---: Function now uses global ARCH variable for repo path
 def install_base_system():
     """Installs the Void Linux base system."""
-    print(f"\n{Style.HEADER}{Style.BOLD}Installing base system...{Style.ENDC}")
-    run_cmd(f"xbps-install -Sy -R {VOID_MIRROR} -r /mnt {BASE_PKGS}")
+    global ARCH
+    repo_url = f"{VOID_MIRROR_BASE}/{ARCH}" if ARCH != "x86_64" else VOID_MIRROR_BASE
+    print(f"\n{Style.HEADER}{Style.BOLD}Installing base system from {repo_url}...{Style.ENDC}")
+    run_cmd(f"xbps-install -Sy -R {repo_url} -r /mnt {BASE_PKGS}")
 
 def install_desktop_and_sound():
     """Installs a desktop environment and sound packages."""
@@ -266,36 +296,54 @@ def chroot_and_configure():
     elif 'sddm' in DESKTOP_ENVIRONMENTS.get(globals().get('de_key', 'none'), ''):
         run_cmd("ln -s /etc/sv/sddm /var/service/", chroot=True, check=False)
 
+# --- MODIFIED ---: Major rewrite for multi-architecture support
 def install_bootloader(disk, uefi, force_removable=False, is_vm=False):
-    """Installs and configures the GRUB bootloader."""
-    print(f"\n{Style.HEADER}{Style.BOLD}Installing GRUB bootloader...{Style.ENDC}")
-    
-    if uefi:
-        print(f"{Style.OKCYAN}UEFI system detected.{Style.ENDC}")
-        run_cmd("xbps-install -Sy grub-x86_64-efi efibootmgr", chroot=True)
-        
-        # In VMs or when forced, '--removable' is a safer default
-        if is_vm or force_removable:
-            print(f"{Style.WARNING}VM detected or removable mode forced. Installing GRUB in removable mode.{Style.ENDC}")
-            run_cmd("grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck", chroot=True)
-        else:
-            print(f"{Style.OKCYAN}Attempting standard UEFI GRUB installation...{Style.ENDC}")
-            result = subprocess.run(f"chroot /mnt /bin/bash -c 'grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck'", shell=True)
-            if result.returncode != 0:
-                print(f"{Style.WARNING}Standard GRUB install failed. Falling back to removable mode.{Style.ENDC}")
+    """Installs and configures the GRUB bootloader based on architecture."""
+    global ARCH
+    print(f"\n{Style.HEADER}{Style.BOLD}Installing bootloader for {ARCH}...{Style.ENDC}")
+
+    if ARCH == "x86_64":
+        if uefi:
+            print(f"{Style.OKCYAN}UEFI system detected.{Style.ENDC}")
+            run_cmd("xbps-install -Sy grub-x86_64-efi efibootmgr", chroot=True)
+            if is_vm or force_removable:
+                print(f"{Style.WARNING}VM detected or removable mode forced. Installing GRUB in removable mode.{Style.ENDC}")
                 run_cmd("grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck", chroot=True)
-    else:
-        print(f"{Style.OKCYAN}Legacy BIOS system detected.{Style.ENDC}")
-        run_cmd("xbps-install -Sy grub", chroot=True)
-        run_cmd(f"grub-install --target=i386-pc {disk}", chroot=True)
+            else:
+                print(f"{Style.OKCYAN}Attempting standard UEFI GRUB installation...{Style.ENDC}")
+                result = subprocess.run(f"chroot /mnt /bin/bash -c 'grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck'", shell=True)
+                if result.returncode != 0:
+                    print(f"{Style.WARNING}Standard GRUB install failed. Falling back to removable mode.{Style.ENDC}")
+                    run_cmd("grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck", chroot=True)
+        else:
+            print(f"{Style.OKCYAN}Legacy BIOS system detected.{Style.ENDC}")
+            run_cmd("xbps-install -Sy grub", chroot=True)
+            run_cmd(f"grub-install --target=i386-pc {disk}", chroot=True)
+    
+    elif ARCH == "aarch64":
+        if uefi:
+            print(f"{Style.OKCYAN}AArch64 UEFI system detected.{Style.ENDC}")
+            run_cmd("xbps-install -Sy grub-arm64-efi efibootmgr", chroot=True)
+            run_cmd("grub-install --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck", chroot=True)
+        else:
+            print(f"{Style.WARNING}Non-UEFI AArch64 systems (e.g., using U-Boot) require manual bootloader setup.{Style.ENDC}")
+            print("Please consult the Void Linux documentation for your specific device after the script finishes.")
+            return # Skip grub-mkconfig
+
+    else: # armv7l and other ARM architectures
+        print(f"{Style.WARNING}Automatic bootloader installation is not supported for {ARCH}.{Style.ENDC}")
+        print("ARM devices like the Raspberry Pi or those using U-Boot have device-specific boot requirements.")
+        print("Please consult the Void Linux documentation for your board to set up the bootloader manually.")
+        return # Skip grub-mkconfig
 
     print(f"{Style.OKCYAN}Generating GRUB configuration...{Style.ENDC}")
     run_cmd("grub-mkconfig -o /boot/grub/grub.cfg", chroot=True)
-    print(f"{Style.OKGREEN}GRUB installation complete.{Style.ENDC}")
+    print(f"{Style.OKGREEN}Bootloader installation step complete.{Style.ENDC}")
 
 
 def main():
     """Main installer workflow."""
+    global ARCH # --- ADDED ---
     print(f"{Style.HEADER}{Style.BOLD}=== Void Linux Interactive Installer ==={Style.ENDC}")
     if os.geteuid() != 0:
         print(f"{Style.FAIL}This script must be run as root.{Style.ENDC}")
@@ -304,6 +352,10 @@ def main():
     parser = argparse.ArgumentParser(description="Void Linux Installer Script")
     parser.add_argument('--force-removable', action='store_true', help='Force GRUB to install in removable media mode (for UEFI).')
     args = parser.parse_args()
+
+    # --- ADDED ---: Detect and confirm architecture first
+    ARCH = detect_arch()
+    print(f"{Style.OKCYAN}Detected Architecture: {Style.BOLD}{ARCH}{Style.ENDC}")
 
     check_dependencies()
     uefi = detect_uefi()
@@ -343,7 +395,7 @@ def main():
             run_cmd(f"mount {root_part} /mnt")
             run_cmd("mkdir -p /mnt/boot/efi")
             run_cmd(f"mount {efi_part} /mnt/boot/efi")
-        else: # BIOS
+        else: # BIOS / Legacy (relevant for x86_64, but generic for partitioning)
             # BOOT (1M bios_boot), SWAP (optional), ROOT (rest)
             run_cmd(f"sgdisk -n 1:0:+1M -t 1:ef02 {disk}") # BIOS Boot
             if input("Create a swap partition? [y/N]: ").lower() == 'y':
@@ -365,8 +417,8 @@ def main():
         manual_partition_and_mount(disk)
 
     # --- Installation and Configuration ---
+    setup_repos() # Setup repos before installing base
     install_base_system()
-    setup_repos()
     install_desktop_and_sound() # Call this before chroot config to enable correct services
     mount_chroot_dirs()
     chroot_and_configure()
