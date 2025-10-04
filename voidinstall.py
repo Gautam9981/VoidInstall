@@ -14,7 +14,7 @@ VOID_MIRROR_BASE = "https://repo-default.voidlinux.org/current"
 BASE_PKGS = "base-system xorg NetworkManager"
 DESKTOP_ENVIRONMENTS = {
     "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter gvfs thunar-volman thunar-archive-plugin xfce4-pulseaudio-plugin network-manager-applet",
-    "gnome": "gnome gdm gnome-tweaks gnome-software gvfs network-manager-applet network-manager",
+    "gnome": "gnome gdm gnome-tweaks gnome-software gvfs network-manager-applet network-manager gnome-shell gnome-terminal",
     "kde": "kde5 sddm konsole plasma-workspace plasma-desktop kdeplasma-addons kde-cli-tools kde-gtk-config kdeconnect dolphin konsole ark sddm-kcm gvfs network-manager-applet",
     "none": ""
 }
