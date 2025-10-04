@@ -39,3 +39,11 @@ The script will check for and install any missing dependencies automatically.
 - If you cancel the install, the script will force unmount all partitions and clean up before retrying.
 - If you encounter issues, check the output for error messages and ensure you are running from a Void Linux live environment.
 
+## Further Steps
+- Once installed, you may end up with no GUI, it is relatively easy to fix. Firstly, you need to type the following commands:
+```
+   sudo ln -s /etc/sv/display_manager (sddm, gdm, etc) /var/service
+   sudo ln -s /etc/sv/dbus /var/service
+   sudo display_manager (sddm, gdm, lightdm, etc)
+```
+
