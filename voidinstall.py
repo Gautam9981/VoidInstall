@@ -11,7 +11,7 @@ import platform # --- ADDED ---
 # --- Configuration ---
 # --- MODIFIED ---: Base mirror URL, architecture will be appended.
 VOID_MIRROR_BASE = "https://repo-default.voidlinux.org/current"
-BASE_PKGS = "base-system xorg NetworkManager"
+BASE_PKGS = "base-system xorg NetworkManager, elogind"
 DESKTOP_ENVIRONMENTS = {
     "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter gvfs thunar-volman thunar-archive-plugin xfce4-pulseaudio-plugin network-manager-applet",
     "gnome": "gnome gdm gnome-tweaks gnome-software gvfs network-manager-applet network-manager gnome-shell gnome-terminal",
@@ -302,7 +302,7 @@ def detect_and_install_graphics(is_vm=False):
     if 'nvidia' in found:
         print(f"{Style.OKCYAN}Preparing to install NVIDIA drivers (proprietary).{Style.ENDC}")
         # Recommend non-free repository, but attempt install anyway
-        pkgs.extend(["nvidia", "nvidia-libs-32bit"])
+        pkgs.extend(["nvidia"])
 
     # AMD
     if 'amd' in found:
