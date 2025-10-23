@@ -11,7 +11,7 @@ import platform # --- ADDED ---
 # --- Configuration ---
 # --- MODIFIED ---: Base mirror URL, architecture will be appended.
 VOID_MIRROR_BASE = "https://repo-default.voidlinux.org/current"
-BASE_PKGS = "base-system xorg NetworkManager elogind"
+BASE_PKGS = "base-system xorg NetworkManager, elogind"
 DESKTOP_ENVIRONMENTS = {
     "xfce": "xfce4 xfce4-terminal lightdm lightdm-gtk3-greeter gvfs thunar-volman thunar-archive-plugin xfce4-pulseaudio-plugin network-manager-applet",
     "gnome": "gnome gdm gnome-tweaks gnome-software gvfs network-manager-applet network-manager gnome-shell gnome-terminal",
@@ -51,31 +51,6 @@ def run_cmd(cmd, check=True, chroot=False):
             sys.exit(1)
         else:
             print(f"{Style.WARNING}Continuing despite error (check=False).{Style.ENDC}")
-
-
-def chroot_run(cmd, input_data=None, check=True):
-    """Run a command inside /mnt chroot with optional stdin data.
-
-    This avoids fragile shell quoting and ensures commands like chpasswd
-    that require stdin work correctly inside the target system.
-    """
-    # Prepare the chrooted command to run the program directly without extra shell quoting
-    full_cmd = ["/usr/sbin/chroot", "/mnt"] + ["/bin/bash", "-c", cmd]
-    print(f"{Style.OKBLUE}[CHROOT]{Style.ENDC} {' '.join(full_cmd)}")
-
-    try:
-        proc = subprocess.run(full_cmd, input=input_data, text=True, check=False)
-        if proc.returncode != 0:
-            print(f"{Style.FAIL}[ERROR] Chroot command failed (code {proc.returncode}): {cmd}{Style.ENDC}")
-            if check:
-                print(f"{Style.WARNING}Exiting due to critical chroot error.{Style.ENDC}")
-                sys.exit(1)
-            else:
-                print(f"{Style.WARNING}Continuing despite chroot error (check=False).{Style.ENDC}")
-    except Exception as e:
-        print(f"{Style.FAIL}[ERROR] Exception while running chroot command: {e}{Style.ENDC}")
-        if check:
-            sys.exit(1)
 
 def check_dependencies():
     """Checks for required commands and installs missing packages."""
@@ -355,16 +330,7 @@ def chroot_and_configure():
     run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf")
 
     print(f"{Style.OKCYAN}Set the root password:{Style.ENDC}")
-    # Prompt for root password here and send it into the chroot using chpasswd to avoid TTY issues
-    while True:
-        root_pw = getpass.getpass("Enter root password: ")
-        root_pw_confirm = getpass.getpass("Confirm root password: ")
-        if root_pw == root_pw_confirm:
-            break
-        print(f"{Style.FAIL}Passwords do not match. Please try again.{Style.ENDC}")
-
-    # chpasswd expects 'root:password' on stdin
-    chroot_run("chpasswd", input_data=f"root:{root_pw}\n")
+    run_cmd("passwd", chroot=True)
 
     tz = input("Enter your timezone (e.g., America/New_York): ").strip()
     run_cmd(f"ln -sf /usr/share/zoneinfo/{tz} /etc/localtime", chroot=True)
@@ -382,7 +348,7 @@ def chroot_and_configure():
     print(f"\n{Style.OKCYAN}Finalizing package configuration (this may take a moment)...{Style.ENDC}")
     run_cmd("xbps-reconfigure -fa", chroot=True)
 
-    print(f"\n{Style.OKCYAN}Creating a user account...{Style.ENDC}")
+    print(f"{Style.OKCYAN}Creating a user account...{Style.ENDC}")
     username = input("Enter a username: ").strip()
     while True:
         password = getpass.getpass(f"Enter password for {username}: ")
@@ -391,8 +357,8 @@ def chroot_and_configure():
             break
         print(f"{Style.FAIL}Passwords do not match. Please try again.{Style.ENDC}")
     
-    chroot_run(f"useradd -m -G wheel,audio,video -s /bin/bash {username}")
-    chroot_run("chpasswd", input_data=f"{username}:{password}\n")
+    run_cmd(f"useradd -m -G wheel,audio,video -s /bin/bash {username}", chroot=True)
+    run_cmd(f"echo '{username}:{password}' | chpasswd", chroot=True)
 
     print(f"{Style.OKCYAN}Setting up sudo and enabling services...{Style.ENDC}")
     run_cmd(f"echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/wheel", chroot=True)
