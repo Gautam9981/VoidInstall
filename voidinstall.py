@@ -375,7 +375,7 @@ def chroot_and_configure():
         run_cmd("ln -s /etc/sv/sddm /var/service/", chroot=True, check=False)
 
 # --- MODIFIED ---: Major rewrite for multi-architecture support
-def install_bootloader(disk, uefi, force_removable=False, is_vm=False):
+def install_bootloader(disk, uefi, force_removable=True, is_vm=False):
     """Installs and configures the GRUB bootloader based on architecture."""
     global ARCH
     print(f"\n{Style.HEADER}{Style.BOLD}Installing bootloader for {ARCH}...{Style.ENDC}")
@@ -384,12 +384,15 @@ def install_bootloader(disk, uefi, force_removable=False, is_vm=False):
         if uefi:
             print(f"{Style.OKCYAN}UEFI system detected.{Style.ENDC}")
             run_cmd("xbps-install -Sy grub-x86_64-efi efibootmgr", chroot=True)
+            # Always use --removable for VMs to ensure bootloader works
             if is_vm or force_removable:
                 print(f"{Style.WARNING}VM detected or removable mode forced. Installing GRUB in removable mode.{Style.ENDC}")
+                # Install both ways for maximum compatibility in VMs
                 run_cmd("grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck", chroot=True)
+                run_cmd("grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=void --recheck", chroot=True, check=False)
             else:
                 print(f"{Style.OKCYAN}Attempting standard UEFI GRUB installation...{Style.ENDC}")
-                result = subprocess.run(f"chroot /mnt /bin/bash -c 'grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Void --recheck'", shell=True)
+                result = subprocess.run(f"chroot /mnt /bin/bash -c 'grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=void --recheck'", shell=True)
                 if result.returncode != 0:
                     print(f"{Style.WARNING}Standard GRUB install failed. Falling back to removable mode.{Style.ENDC}")
                     run_cmd("grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck", chroot=True)
@@ -415,8 +418,8 @@ def install_bootloader(disk, uefi, force_removable=False, is_vm=False):
         return # Skip grub-mkconfig
 
     print(f"{Style.OKCYAN}Generating GRUB configuration...{Style.ENDC}")
-    # Ensure grub directory exists inside chroot before generating config
-    run_cmd("mkdir -p /mnt/boot/grub", check=False)
+    # Ensure grub2 directory exists inside chroot before generating config
+    run_cmd("mkdir -p /mnt/boot/grub2", check=False)
     run_cmd("grub-mkconfig -o /boot/grub/grub.cfg", chroot=True)
     print(f"{Style.OKGREEN}Bootloader installation step complete.{Style.ENDC}")
 
